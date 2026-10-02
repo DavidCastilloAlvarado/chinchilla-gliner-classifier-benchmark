@@ -124,6 +124,19 @@ on an NVIDIA GeForce RTX 5060 Ti with 16 GB VRAM. Full numbers are written to
 `apply_for_credit_card` collapse, 3% → 96%), ~15% faster, tighter tail latency.
 Cost: −5.5 pts on English.
 
+The `decide` model is integrated as an optional third checkpoint and has now been
+benchmarked on the same Spanish dataset and GPU.
+
+```bash
+uv run python src/classifier/classify.py \
+  --data data/banking_intents_es.jsonl \
+  --model decide \
+  --gpu-mode cuda
+```
+
+It uses `fastino/GLiNER2.5-multi-Decide`, the multilingual operational-decision
+checkpoint for intent, routing, triage, and related tasks.
+
 ### GPU benchmark: RTX 5060 Ti 16 GB
 
 Command used:
@@ -169,6 +182,68 @@ and `reset_password` 1.00.
 GPU runtime emitted non-fatal compatibility warnings for legacy tokenizer
 metadata and an SDPA fallback to eager attention. The model loaded and completed
 successfully using the standard CUDA path.
+
+### GPU benchmark: `GLiNER2.5-multi-Decide`
+
+Command used:
+
+```bash
+uv run python src/classifier/classify.py \
+  --data data/banking_intents_es.jsonl \
+  --model decide \
+  --gpu-mode cuda
+```
+
+Configuration: `fastino/GLiNER2.5-multi-Decide`, Spanish dataset, 1,000 examples,
+no label descriptions, no `torch.compile`, single-example inference, same RTX
+5060 Ti 16 GB.
+
+| Metric | `decide` on RTX 5060 Ti | `multi` on RTX 5060 Ti |
+|---|---:|---:|
+| **Accuracy** | **93.7%** (937/1,000) | 88.7% (887/1,000) |
+| Model load | 3.44 s | 3.44 s |
+| Min latency | 10.95 ms | 10.97 ms |
+| Mean latency | **11.44 ms** | 11.54 ms |
+| Median latency | **11.05 ms** | 11.08 ms |
+| p90 | **11.12 ms** | 11.15 ms |
+| p95 | **11.18 ms** | 11.23 ms |
+| p99 | **11.63 ms** | 11.67 ms |
+| Max latency | 225.38 ms | 225.81 ms |
+| Stddev | **7.53 ms** | 7.99 ms |
+| Total inference | **11.46 s** | 11.56 s |
+| Throughput (examples/s) | **87.3** | 86.53 |
+| Throughput (tokens/s) | **948.4** | 940.0 |
+
+On this Spanish benchmark, `decide` improves accuracy by **5.0 percentage points**
+(88.7% → 93.7%) while maintaining essentially the same GPU latency and
+throughput. It also reduces errors from 113 to 63, a **44.2% reduction**.
+The Decide model is therefore the preferred Fastino checkpoint for this banking
+intent task, while `multi` remains the general-purpose multilingual model.
+
+Per-intent accuracy for `decide`:
+`check_balance` 0.81, `transfer_money` 1.00, `pay_bill` 1.00,
+`report_lost_card` 0.71, `report_fraud` 1.00, `apply_for_loan` 0.93,
+`apply_for_credit_card` 0.96, `close_account` 0.96, `open_account` 1.00,
+and `reset_password` 1.00.
+
+### Decide GPU error analysis
+
+The Decide run produced **63/1,000 errors (6.3%)**. The most frequent confusion
+pairs were:
+
+| Gold intent | Predicted intent | Count |
+|---|---|---:|
+| `check_balance` | `transfer_money` | 18 |
+| `report_lost_card` | `apply_for_credit_card` | 13 |
+| `report_lost_card` | `reset_password` | 10 |
+| `apply_for_loan` | `apply_for_credit_card` | 7 |
+| `report_lost_card` | `close_account` | 6 |
+| `apply_for_credit_card` | `open_account` | 4 |
+| `close_account` | `reset_password` | 4 |
+| `check_balance` | `open_account` | 1 |
+
+The remaining errors are concentrated around card actions (`lost`, `credit card`,
+`close account`) and account-balance language that is interpreted as a transfer.
 
 ### Per-intent accuracy (no descriptions)
 
