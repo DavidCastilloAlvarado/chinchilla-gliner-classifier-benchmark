@@ -5,9 +5,10 @@ classify_text) plus aggregate metrics: percentiles, throughput, tokens/s,
 model load time, and per-intent latency.
 
 Usage:
-    uv run python src/classifier/classify.py                        # EN dataset, base model (default)
-    uv run python src/classifier/classify.py --model multi          # multilingual model
-    uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi
+    uv run python src/classifier/classify.py                        # EN dataset, base model, CPU (defaults)
+    uv run python src/classifier/classify.py --model multi          # multilingual model on CPU
+    uv run python src/classifier/classify.py --model multi --gpu-mode cuda
+    uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi --gpu-mode cuda
     uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi --lang es
     uv run python src/classifier/classify.py --limit 20             # quick smoke test
 """
@@ -19,6 +20,7 @@ import time
 from collections import Counter
 from pathlib import Path
 
+import torch
 from gliner2 import AutoExtractor, GLiNER2
 
 TEMP_DIR = Path(__file__).resolve().parents[2] / "temp"
@@ -73,18 +75,26 @@ INTENT_DESCRIPTIONS = {
 }
 
 
-def load_model(name: str) -> tuple[object, float, str]:
+def load_model(name: str, gpu_mode: str) -> tuple[object, float, str, str]:
     repo, model_dir, loader = MODELS[name]
     if not model_dir.exists():
         raise SystemExit(
             f"Model not found at {model_dir}. Run: uv run python src/classifier/download_model.py {name}"
         )
-    print(f"Loading {repo} from {model_dir} ...")
+
+    if gpu_mode == "cuda" and not torch.cuda.is_available():
+        raise SystemExit(
+            "--gpu-mode cuda was requested, but CUDA is not available. "
+            "Install a compatible NVIDIA driver and verify with `nvidia-smi`."
+        )
+
+    device = "cuda" if gpu_mode == "cuda" else "cpu"
+    print(f"Loading {repo} from {model_dir} on {device} ...")
     t0 = time.perf_counter()
-    model = loader.from_pretrained(str(model_dir))
+    model = loader.from_pretrained(str(model_dir), map_location=device)
     load_s = time.perf_counter() - t0
-    print(f"Model loaded in {load_s:.2f}s")
-    return model, load_s, repo
+    print(f"Model loaded in {load_s:.2f}s on {device}")
+    return model, load_s, repo, device
 
 
 def percentile(sorted_vals: list[float], p: float) -> float:
@@ -132,6 +142,12 @@ def main() -> None:
         help="base=fastino/gliner2-base-v1 (EN span) | multi=fastino/gliner2.5-multi-v1 (multilingual)",
     )
     parser.add_argument(
+        "--gpu-mode",
+        choices=["cpu", "cuda"],
+        default="cpu",
+        help="Inference device: cpu (default) or cuda (NVIDIA GPU)",
+    )
+    parser.add_argument(
         "--lang",
         choices=["en", "es"],
         default=None,
@@ -150,7 +166,7 @@ def main() -> None:
     if args.lang:
         tasks = {"intent": {label: INTENT_DESCRIPTIONS[args.lang][label] for label in INTENTS}}
 
-    model, load_s, repo = load_model(args.model)
+    model, load_s, repo, device = load_model(args.model, args.gpu_mode)
 
     if args.compile:
         print("Enabling torch.compile ...")
@@ -210,6 +226,7 @@ def main() -> None:
     metrics = {
         "dataset": str(args.data),
         "model": repo,
+        "device": device,
         "label_descriptions": args.lang,
         "compiled": args.compile,
         "model_load_seconds": round(load_s, 2),

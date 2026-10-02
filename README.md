@@ -61,16 +61,23 @@ Each writes 1,000 unique examples, 100 per intent:
 ## 3. Classify (with latency metrics)
 
 ```bash
-uv run python src/classifier/classify.py                        # EN dataset, base model (default)
-uv run python src/classifier/classify.py --model multi          # multilingual model
-uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi
-uv run python src/classifier/classify.py --limit 20             # quick smoke test
+uv run python src/classifier/classify.py                                  # CPU (default)
+uv run python src/classifier/classify.py --model multi                     # multilingual model on CPU
+uv run python src/classifier/classify.py --model multi --gpu-mode cuda     # NVIDIA GPU
+uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi --gpu-mode cuda
+uv run python src/classifier/classify.py --limit 20                       # quick smoke test
 ```
 
 Loads the selected model from `temp/` (no Hub access at inference time) and runs
 `model.classify_text(text, {"intent": [...]})` over the dataset. `--model base` uses
 `GLiNER2.from_pretrained` (span checkpoint); `--model multi` uses
 `AutoExtractor.from_pretrained` (boundary checkpoint).
+
+`--gpu-mode` selects the inference device: `cpu` is the default; use
+`--gpu-mode cuda` on a machine with a compatible NVIDIA driver. The script checks
+`torch.cuda.is_available()` and fails with a clear message if CUDA is unavailable.
+The selected device is recorded in each `metrics_*.json` file as `device`.
+Only the NVIDIA driver is required at runtime; the CUDA Toolkit is not required.
 
 `--lang {en,es}` injects a short description per intent into the model prompt
 (label → description dict instead of a plain label list). This improves accuracy
