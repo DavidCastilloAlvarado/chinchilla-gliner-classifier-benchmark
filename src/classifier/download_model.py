@@ -3,7 +3,8 @@
 Usage:
     uv run python src/classifier/download_model.py            # base (default)
     uv run python src/classifier/download_model.py multi      # gliner2.5-multi-v1
-    uv run python src/classifier/download_model.py all        # both
+    uv run python src/classifier/download_model.py decide     # GLiNER2.5-multi-Decide
+    uv run python src/classifier/download_model.py all        # all checkpoints
 """
 
 import sys
@@ -14,6 +15,7 @@ from huggingface_hub import snapshot_download
 MODELS = {
     "base": "fastino/gliner2-base-v1",
     "multi": "fastino/gliner2.5-multi-v1",
+    "decide": "fastino/GLiNER2.5-multi-Decide",
 }
 TEMP_DIR = Path(__file__).resolve().parents[2] / "temp"
 

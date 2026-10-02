@@ -7,8 +7,9 @@ model load time, and per-intent latency.
 Usage:
     uv run python src/classifier/classify.py                        # EN dataset, base model, CPU (defaults)
     uv run python src/classifier/classify.py --model multi          # multilingual model on CPU
+    uv run python src/classifier/classify.py --model decide        # multilingual decision model on CPU
     uv run python src/classifier/classify.py --model multi --gpu-mode cuda
-    uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi --gpu-mode cuda
+    uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model decide --gpu-mode cuda
     uv run python src/classifier/classify.py --data data/banking_intents_es.jsonl --model multi --lang es
     uv run python src/classifier/classify.py --limit 20             # quick smoke test
 """
@@ -30,6 +31,7 @@ DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "banking_intents.json
 MODELS = {
     "base": ("fastino/gliner2-base-v1", TEMP_DIR / "gliner2-base-v1", GLiNER2),
     "multi": ("fastino/gliner2.5-multi-v1", TEMP_DIR / "gliner2.5-multi-v1", AutoExtractor),
+    "decide": ("fastino/GLiNER2.5-multi-Decide", TEMP_DIR / "GLiNER2.5-multi-Decide", AutoExtractor),
 }
 
 INTENTS = [
@@ -139,7 +141,7 @@ def main() -> None:
         "--model",
         choices=list(MODELS),
         default="base",
-        help="base=fastino/gliner2-base-v1 (EN span) | multi=fastino/gliner2.5-multi-v1 (multilingual)",
+        help="base=fastino/gliner2-base-v1 | multi=fastino/gliner2.5-multi-v1 | decide=fastino/GLiNER2.5-multi-Decide", 
     )
     parser.add_argument(
         "--gpu-mode",
