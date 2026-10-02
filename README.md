@@ -23,6 +23,15 @@ classifier/
 │   ├── banking_intents_es.jsonl   # 1,000 Spanish examples (10 intents × 100)
 │   ├── predictions_*.jsonl        # predictions + confidence + per-example latency_ms
 │   └── metrics_*.json             # latency percentiles, throughput, accuracy
+├── app/                            # independent FastAPI serving proof of concept
+│   ├── main.py                     # FastAPI entrypoint
+│   ├── api/                        # routes and Pydantic request/response models
+│   ├── core/                       # lifespan, model, registry, dependencies, batching
+│   ├── apps/                       # stored classification/extraction JSON schemas
+│   └── README.md                   # server API and deployment documentation
+├── stress/
+│   ├── locustfile.py               # concurrent Locust load test
+│   └── README.md                   # batching verification and PromQL queries
 └── src/classifier/
     ├── download_model.py        # downloads the model into temp/
     ├── generate_examples.py     # generates the 1,000 English examples
@@ -36,6 +45,89 @@ classifier/
 ```bash
 uv sync
 ```
+
+## FastAPI serving proof of concept
+
+The independent `app/` package serves the local GLiNER2 model with a modular
+FastAPI architecture and a small dynamic micro-batcher. It supports ad-hoc
+classification, stored app schemas for classification/extraction, CUDA model
+loading, optional `torch.compile`, and a configurable 10 ms batching window.
+
+```bash
+# CPU by default; use GPU_MODE=cuda for NVIDIA inference
+MODEL_NAME=decide GPU_MODE=cuda COMPILE_MODEL=true \
+  uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+See [`app/README.md`](app/README.md) for the endpoint contracts, app JSON
+format, batching design, environment variables, and Kubernetes readiness guidance.
+
+The Locust stress test and Prometheus verification instructions are in
+[`stress/README.md`](stress/README.md):
+
+```bash
+uv run locust -f stress/locustfile.py --headless -u 16 -r 16 -t 30s \
+  -H http://127.0.0.1:8000
+curl -s http://127.0.0.1:8000/metrics | grep gliner_inference
+```
+
+### FastAPI environment variables
+
+| Variable | Default | Meaning |
+|---|---:|---|
+| `MODEL_NAME` | `decide` | Local checkpoint: `base`, `multi`, or `decide` |
+| `MODEL_DIR` | `temp/<model>` | Override the local checkpoint directory |
+| `GPU_MODE` | `cpu` | Inference device: `cpu` or `cuda` |
+| `COMPILE_MODEL` | `false` | Run `torch.compile` and warmup during startup |
+| `BATCH_WINDOW_MS` | `10` | Maximum time to collect compatible requests |
+| `N_CONCURRENCY` | `8` | Maximum requests in one model batch |
+| `MAX_QUEUE_SIZE` | `256` | Maximum queued requests before HTTP 429 |
+| `REQUEST_TIMEOUT_SECONDS` | `30` | Maximum wait for a result before HTTP 504 |
+| `APPS_DIR` | `app/apps` | Directory containing stored app JSON schemas |
+
+The queue is bounded. A full queue returns `429` with `Retry-After: 1`; a model
+failure returns `503`; and a request timeout returns `504`. A hard hang inside
+native PyTorch/CUDA code requires process-level supervision and restart.
+
+### Prometheus metrics
+
+`GET /metrics` exposes the following metrics:
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `gliner_inference_batches_total` | Counter | `operation`, `device`, `batch_size`, `status` | Actual model calls; `status` is `success` or `error` |
+| `gliner_inference_batch_inputs_total` | Counter | `operation`, `device`, `status` | Requests processed by model calls |
+| `gliner_inference_batch_size` | Histogram | `operation`, `device` | Requests per model call |
+| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device` | Model duration per batch |
+| `gliner_inference_queue_wait_seconds` | Histogram | `operation`, `device` | Time waiting before inference |
+| `gliner_inference_queue_depth` | Gauge | none | Current bounded queue depth |
+| `gliner_inference_queue_rejected_total` | Counter | `operation` | HTTP 429 queue rejections |
+| `gliner_inference_request_timeouts_total` | Counter | `operation` | HTTP 504 request timeouts |
+| `gliner_inference_inflight_batches` | Gauge | `operation`, `device` | Currently executing batches |
+| `gliner_inference_last_batch_size` | Gauge | `operation`, `device` | Most recently started batch size |
+
+The primary proof that batching is active is a growing series such as:
+
+```text
+gliner_inference_batches_total{operation="classification",device="cuda",batch_size="8",status="success"}
+```
+
+Prometheus also emits `_created` counter series and `_bucket`, `_sum`, and
+`_count` series for histograms. See [`app/README.md`](app/README.md) and
+[`stress/README.md`](stress/README.md) for full endpoint, PromQL, and Locust
+documentation.
+
+### Locust stress-test variables
+
+These configure [`stress/locustfile.py`](stress/locustfile.py):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LOCUST_APP_ID` | `banking_es` | Stored app schema ID |
+| `LOCUST_USAGE_TYPE` | `classification` | `classification` or `extraction` |
+| `SERVER_MODE` | `stored` | `stored` uses an app schema; `adhoc` sends labels/descriptions |
+| `LOCUST_WAIT_MIN` | `0` | Minimum per-user pause, seconds |
+| `LOCUST_WAIT_MAX` | `0` | Maximum per-user pause, seconds |
 
 ## 1. Download the models into `temp/`
 
@@ -90,9 +182,12 @@ on confusable intents (ES: 88.7% → 93.4%) at the cost of ~2.4x latency
 (longer prompt). Default: no descriptions.
 
 `--compile` enables `torch.compile` (a warmup/tracing call is excluded from timing).
-Measured on this CPU: **not worth it** — 65.7 s one-time tracing cost and steady-state
-latency went *up* (234.6 ms → 294.4 ms mean on ES). Keep it off for CPU; it is
-meant to pay off on GPU or large batches.
+Measured on the development CPU: **not worth it** — 65.7 s one-time tracing cost
+and steady-state latency went up (234.6 ms → 294.4 ms mean on ES). On the RTX 5060 Ti,
+`decide --compile` reduced mean latency from 11.44 ms to 7.75 ms and increased
+throughput from 87.3 to 128.8 examples/s, but required a 44.8 s one-time warmup.
+Keep it off for CPU; on GPU, enable it for long-running workloads where the warmup
+can be amortized.
 
 **Metrics** (wall-clock, end-to-end per example):
 - Per-example `latency_ms` in each `predictions_*.jsonl` line
@@ -244,6 +339,49 @@ pairs were:
 
 The remaining errors are concentrated around card actions (`lost`, `credit card`,
 `close account`) and account-balance language that is interpreted as a transfer.
+
+### GPU benchmark: `decide` with `torch.compile`
+
+Command used:
+
+```bash
+uv run python src/classifier/classify.py \
+  --data data/banking_intents_es.jsonl \
+  --compile \
+  --model decide \
+  --gpu-mode cuda
+```
+
+Configuration: `fastino/GLiNER2.5-multi-Decide`, RTX 5060 Ti 16 GB, Spanish dataset,
+1,000 examples, no label descriptions, single-example inference. The compilation
+warmup took **44.8 s** and was excluded from the per-example latency metrics.
+
+| Metric | `decide` + `compile` | `decide` without compile |
+|---|---:|---:|
+| **Accuracy** | **93.7%** (937/1,000) | 93.7% (937/1,000) |
+| Model load | 3.45 s | 3.44 s |
+| Compile warmup | 44.8 s | — |
+| Min latency | **7.58 ms** | 10.95 ms |
+| Mean latency | **7.75 ms** | 11.44 ms |
+| Median latency | **7.74 ms** | 11.05 ms |
+| p90 | **7.83 ms** | 11.12 ms |
+| p95 | **7.86 ms** | 11.18 ms |
+| p99 | **7.97 ms** | 11.63 ms |
+| Max latency | **8.74 ms** | 225.38 ms |
+| Stddev | **0.08 ms** | 7.53 ms |
+| Total inference | **7.76 s** | 11.46 s |
+| Throughput (examples/s) | **128.8** | 87.3 |
+| Throughput (tokens/s) | **1,399.3** | 948.4 |
+
+`torch.compile` delivered a **32.3% lower mean latency** and **47.5% higher
+throughput** with no accuracy change. Including the one-time 44.8 s compilation,
+the run took approximately 52.6 s instead of 11.5 s. At this measured saving,
+the warmup breaks even after roughly **12,000 examples**, so compilation is
+recommended for long-running GPU services or large batches, not short one-off jobs.
+
+Compilation emitted non-fatal Triton warnings about `max_autotune_gemm`, a C macro
+redefinition, and deprecated TorchScript usage. The compiled benchmark completed
+successfully.
 
 ### Per-intent accuracy (no descriptions)
 

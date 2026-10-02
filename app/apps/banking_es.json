@@ -1,0 +1,32 @@
+{
+  "app_id": "banking_es",
+  "description": "Spanish banking intent and entity extraction schemas.",
+  "classification": {
+    "labels": {
+      "check_balance": "Consultar el saldo o el dinero disponible en una cuenta",
+      "transfer_money": "Mover o enviar dinero de una cuenta a otra cuenta o a otra persona",
+      "pay_bill": "Pagar una factura o recibo de un servicio",
+      "report_lost_card": "Reportar una tarjeta perdida o extraviada y solicitar bloquearla",
+      "report_fraud": "Reportar una transacción no autorizada, cargo sospechoso o fraude",
+      "apply_for_loan": "Solicitar un préstamo o crédito",
+      "apply_for_credit_card": "Solicitar o abrir una tarjeta de crédito nueva",
+      "close_account": "Cerrar o dar de baja una cuenta bancaria",
+      "open_account": "Abrir una cuenta bancaria nueva",
+      "reset_password": "Restablecer o cambiar la contraseña de la banca en línea o la app"
+    },
+    "multi_label": false,
+    "threshold": 0.5
+  },
+  "extraction": {
+    "entities": {
+      "amount": "Un importe o cantidad de dinero",
+      "currency": "Una moneda, como soles, dólares o euros",
+      "card": "Un número o tipo de tarjeta bancaria",
+      "account": "Un tipo, número o identificador de cuenta bancaria",
+      "date": "Una fecha relacionada con una operación bancaria",
+      "person": "El nombre de una persona relacionada con la operación"
+    },
+    "include_confidence": true,
+    "include_spans": true
+  }
+}
