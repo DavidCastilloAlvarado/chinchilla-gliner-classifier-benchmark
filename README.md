@@ -14,6 +14,7 @@ managed with **uv**. Three models selectable at benchmark time:
 ```
 classifier/
 ├── pyproject.toml            # uv project (gliner2[local], huggingface-hub)
+├── .env.example              # FastAPI configuration template
 ├── temp/
 │   ├── gliner2-base-v1/          # base model weights (read from local disk)
 │   ├── gliner2.5-multi-v1/       # general multilingual model weights
@@ -45,6 +46,16 @@ classifier/
 ```bash
 uv sync
 ```
+
+For local FastAPI configuration:
+
+```bash
+cp .env.example .env
+```
+
+The server loads the project-root `.env` during startup when it exists. Existing
+system environment variables take precedence; if `.env` is absent, system
+environment variables are used directly. The real `.env` is ignored by Git.
 
 ## FastAPI serving proof of concept
 
@@ -85,6 +96,10 @@ curl -s http://127.0.0.1:8000/metrics | grep gliner_inference
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Maximum wait for a result before HTTP 504 |
 | `APPS_DIR` | `app/apps` | Directory containing stored app JSON schemas |
 
+These variables can be placed in `.env` or provided by the system/container
+environment. System environment values take precedence over `.env`. `HOST` and
+`PORT` are Uvicorn command-line options rather than application settings.
+
 The queue is bounded. A full queue returns `429` with `Retry-After: 1`; a model
 failure returns `503`; and a request timeout returns `504`. A hard hang inside
 native PyTorch/CUDA code requires process-level supervision and restart.
@@ -98,7 +113,7 @@ native PyTorch/CUDA code requires process-level supervision and restart.
 | `gliner_inference_batches_total` | Counter | `operation`, `device`, `batch_size`, `status` | Actual model calls; `status` is `success` or `error` |
 | `gliner_inference_batch_inputs_total` | Counter | `operation`, `device`, `status` | Requests processed by model calls |
 | `gliner_inference_batch_size` | Histogram | `operation`, `device` | Requests per model call |
-| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device` | Model duration per batch |
+| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device`, `batch_size` | Model duration per batch, filterable by batch size |
 | `gliner_inference_queue_wait_seconds` | Histogram | `operation`, `device` | Time waiting before inference |
 | `gliner_inference_queue_depth` | Gauge | none | Current bounded queue depth |
 | `gliner_inference_queue_rejected_total` | Counter | `operation` | HTTP 429 queue rejections |
@@ -112,8 +127,24 @@ The primary proof that batching is active is a growing series such as:
 gliner_inference_batches_total{operation="classification",device="cuda",batch_size="8",status="success"}
 ```
 
-Prometheus also emits `_created` counter series and `_bucket`, `_sum`, and
-`_count` series for histograms. See [`app/README.md`](app/README.md) and
+Batch duration can be filtered by exact batch size:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(gliner_inference_batch_duration_seconds_bucket{
+      operation="classification",
+      device="cuda",
+      batch_size="50"
+    }[5m])
+  )
+)
+```
+
+Histogram metrics also expose the standard `_bucket`, `_sum`, and `_count`
+series. The application disables the generated `_created` helper series. See
+[`app/README.md`](app/README.md) and
 [`stress/README.md`](stress/README.md) for full endpoint, PromQL, and Locust
 documentation.
 

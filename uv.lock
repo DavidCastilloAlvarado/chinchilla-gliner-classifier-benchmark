@@ -389,6 +389,7 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "prometheus-client" },
     { name = "protobuf" },
+    { name = "python-dotenv" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -404,6 +405,7 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.36.2" },
     { name = "prometheus-client", specifier = ">=0.26.0" },
     { name = "protobuf", specifier = ">=7.36.2" },
+    { name = "python-dotenv", specifier = ">=1.2.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
 

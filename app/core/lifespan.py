@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from .apps import AppRegistry
 from .batching import MicroBatcher
-from .config import Settings
+from .config import Settings, load_environment
 from .model import ModelService
 
 
@@ -22,10 +22,12 @@ class Runtime:
     batcher: MicroBatcher
     ready: bool = False
     warmup_seconds: float | None = None
+    env_file_loaded: bool = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    env_file_loaded = load_environment()
     settings = Settings.from_env()
     registry = AppRegistry(settings.apps_dir)
     registry.load()
@@ -59,6 +61,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         batcher=batcher,
         ready=True,
         warmup_seconds=warmup_seconds,
+        env_file_loaded=env_file_loaded,
     )
     app.state.runtime = runtime
     try:

@@ -106,7 +106,7 @@ requests. The complete metric catalog is:
 | `gliner_inference_batches_total` | Counter | `operation`, `device`, `batch_size`, `status` | Actual model calls; `status` is `success` or `error` |
 | `gliner_inference_batch_inputs_total` | Counter | `operation`, `device`, `status` | Requests processed by model calls |
 | `gliner_inference_batch_size` | Histogram | `operation`, `device` | Distribution of requests per model call |
-| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device` | Wall-clock model duration per batch |
+| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device`, `batch_size` | Wall-clock model duration per batch, filterable by batch size |
 | `gliner_inference_queue_wait_seconds` | Histogram | `operation`, `device` | Request wait time before inference |
 | `gliner_inference_queue_depth` | Gauge | none | Current bounded queue depth |
 | `gliner_inference_queue_rejected_total` | Counter | `operation` | HTTP 429 responses due to a full queue |
@@ -114,8 +114,8 @@ requests. The complete metric catalog is:
 | `gliner_inference_inflight_batches` | Gauge | `operation`, `device` | Currently executing model batches |
 | `gliner_inference_last_batch_size` | Gauge | `operation`, `device` | Most recently started batch size |
 
-Prometheus additionally emits `_created` series for counters and histogram
-series such as `_bucket`, `_sum`, and `_count`.
+The application disables `_created` helper series. Histograms still expose the
+standard `_bucket`, `_sum`, and `_count` series.
 
 If the test is really batching, `batch_size="8"` should increase and the
 histogram should show values above 1. If every request executes alone, only
@@ -147,6 +147,35 @@ sum(rate(gliner_inference_batches_total{status="success"}[1m]))
 ```
 
 The second query estimates the average number of requests per model batch.
+
+Filter batch duration for one exact batch size:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(gliner_inference_batch_duration_seconds_bucket{
+      operation="classification",
+      device="cuda",
+      batch_size="50"
+    }[5m])
+  )
+)
+```
+
+Compare p95 batch duration across batch sizes:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (batch_size, le) (
+    rate(gliner_inference_batch_duration_seconds_bucket[5m])
+  )
+)
+```
+
+The duration metric now includes `batch_size` as a label, so every bucket, sum,
+and count can be filtered by the exact batch size.
 
 ## Locust environment variables
 

@@ -69,6 +69,7 @@ async def readiness(runtime: Runtime = Depends(get_runtime)) -> dict[str, Any]:
         "request_timeout_seconds": runtime.settings.request_timeout_seconds,
         "compile_model": runtime.settings.compile_model,
         "warmup_seconds": runtime.warmup_seconds,
+        "env_file_loaded": runtime.env_file_loaded,
     }
 
 

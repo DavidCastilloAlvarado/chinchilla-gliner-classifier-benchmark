@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import Counter, Gauge, Histogram, disable_created_metrics
+
+# The client library creates *_created helper series for counters/histograms.
+# They are not useful for this service's dashboards, so disable them before
+# defining any metrics.
+disable_created_metrics()
 
 BATCHES = Counter(
     "gliner_inference_batches_total",
@@ -23,7 +28,7 @@ BATCH_SIZE = Histogram(
 BATCH_DURATION = Histogram(
     "gliner_inference_batch_duration_seconds",
     "Wall-clock model inference duration per batch.",
-    ["operation", "device"],
+    ["operation", "device", "batch_size"],
 )
 QUEUE_WAIT = Histogram(
     "gliner_inference_queue_wait_seconds",
@@ -69,7 +74,7 @@ def observe_batch(
     BATCHES.labels(operation, device, str(batch_size), status).inc()
     BATCH_INPUTS.labels(operation, device, status).inc(batch_size)
     BATCH_SIZE.labels(operation, device).observe(batch_size)
-    BATCH_DURATION.labels(operation, device).observe(duration_seconds)
+    BATCH_DURATION.labels(operation, device, str(batch_size)).observe(duration_seconds)
     for wait_seconds in queue_wait_seconds:
         QUEUE_WAIT.labels(operation, device).observe(wait_seconds)
     LAST_BATCH_SIZE.labels(operation, device).set(batch_size)

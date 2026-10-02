@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_REPOS = {
     "base": "fastino/gliner2-base-v1",
@@ -17,6 +19,12 @@ MODEL_DIR_NAMES = {
     "multi": "gliner2.5-multi-v1",
     "decide": "GLiNER2.5-multi-Decide",
 }
+ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def load_environment() -> bool:
+    """Load the project .env before reading settings; existing env wins."""
+    return load_dotenv(dotenv_path=ENV_FILE, override=False)
 
 
 def _env_bool(name: str, default: bool = False) -> bool:

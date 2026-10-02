@@ -3,6 +3,23 @@
 This directory is an independent serving application. It does not import the
 benchmark implementation under `src/`.
 
+## Configuration loading
+
+At startup, the FastAPI lifespan first looks for the project-root `.env` file.
+If it exists, `python-dotenv` loads its values into `os.environ`. Existing system
+environment variables are not overwritten, so container/Kubernetes environment
+variables take precedence over `.env`. If `.env` does not exist, the application
+uses the system environment directly.
+
+Create a local configuration with:
+
+```bash
+cp .env.example .env
+```
+
+`.env` is ignored by Git. The readiness response reports whether the file was
+found as `env_file_loaded`.
+
 ## Run
 
 The default configuration serves the locally downloaded multilingual Decide
@@ -176,6 +193,10 @@ shows whether a request actually shared a batch.
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Maximum request wait before HTTP 504 |
 | `APPS_DIR` | `app/apps` | Directory containing app JSON files |
 
+Values may come from `.env` or the system environment. If both define a value,
+the system environment wins. `HOST` and `PORT` are Uvicorn command-line options,
+not application settings; configure them in the `uvicorn` command.
+
 ### Capacity and failure responses
 
 | HTTP status | Cause | Behavior |
@@ -200,12 +221,27 @@ gliner_inference_batches_total{operation="classification",device="cuda",batch_si
 
 It increments once per actual model call containing eight requests.
 
+Filter batch-duration p95 for a specific batch size:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le) (
+    rate(gliner_inference_batch_duration_seconds_bucket{
+      operation="classification",
+      device="cuda",
+      batch_size="50"
+    }[5m])
+  )
+)
+```
+
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `gliner_inference_batches_total` | Counter | `operation`, `device`, `batch_size`, `status` | Actual model calls; `status` is `success` or `error` |
 | `gliner_inference_batch_inputs_total` | Counter | `operation`, `device`, `status` | Requests processed by model calls |
 | `gliner_inference_batch_size` | Histogram | `operation`, `device` | Distribution of requests per batch |
-| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device` | Wall-clock model duration per batch |
+| `gliner_inference_batch_duration_seconds` | Histogram | `operation`, `device`, `batch_size` | Wall-clock model duration per batch, filterable by batch size |
 | `gliner_inference_queue_wait_seconds` | Histogram | `operation`, `device` | Request wait time before batch execution |
 | `gliner_inference_queue_depth` | Gauge | none | Requests currently waiting in the bounded queue |
 | `gliner_inference_inflight_batches` | Gauge | `operation`, `device` | Model batches currently executing |
@@ -213,16 +249,16 @@ It increments once per actual model call containing eight requests.
 | `gliner_inference_queue_rejected_total` | Counter | `operation` | Requests rejected with HTTP 429 because the queue was full |
 | `gliner_inference_request_timeouts_total` | Counter | `operation` | Requests that returned HTTP 504 after waiting too long |
 
-Prometheus automatically exposes `_created` series for counters and histogram
-series such as `_bucket`, `_sum`, and `_count`. `operation` is currently
-`classification` or `extraction`; `batch_size` is a string label such as `1`,
-`4`, or `8`. See [`stress/README.md`](../stress/README.md) for Locust commands,
-PromQL queries, and interpretation guidance.
+The application disables the generated `_created` helper series. Histogram
+metrics still expose the standard `_bucket`, `_sum`, and `_count` series.
+`operation` is currently `classification` or `extraction`; `batch_size` is a
+string label such as `1`, `4`, or `8`. See [`stress/README.md`](../stress/README.md)
+for Locust commands, PromQL queries, and interpretation guidance.
 
 Health endpoints:
 
 - `GET /health/live` — process liveness
-- `GET /health/ready` — model and batcher readiness/configuration
+- `GET /health/ready` — model, batcher, and environment readiness/configuration
 - `GET /metrics` — Prometheus metrics
 - `GET /api/doc` — Swagger UI
 - `GET /api/redoc` — ReDoc
