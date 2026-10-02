@@ -137,6 +137,11 @@ def main() -> None:
         default=None,
         help="Inject label descriptions in this language into the model prompt (default: no descriptions)",
     )
+    parser.add_argument(
+        "--compile",
+        action="store_true",
+        help="Enable torch.compile (first call traces the graph; a warmup call is excluded from timing)",
+    )
     parser.add_argument("--limit", type=int, default=None, help="Only classify the first N examples")
     args = parser.parse_args()
 
@@ -146,6 +151,13 @@ def main() -> None:
         tasks = {"intent": {label: INTENT_DESCRIPTIONS[args.lang][label] for label in INTENTS}}
 
     model, load_s, repo = load_model(args.model)
+
+    if args.compile:
+        print("Enabling torch.compile ...")
+        model.compile()
+        t0 = time.perf_counter()
+        model.classify_text("warmup", tasks)  # tracing happens here, excluded from timing
+        print(f"Warmup (tracing) took {time.perf_counter() - t0:.1f}s")
 
     examples = [json.loads(line) for line in args.data.read_text(encoding="utf-8").splitlines() if line.strip()]
     if args.limit:
@@ -199,6 +211,7 @@ def main() -> None:
         "dataset": str(args.data),
         "model": repo,
         "label_descriptions": args.lang,
+        "compiled": args.compile,
         "model_load_seconds": round(load_s, 2),
         "n_examples": n,
         "accuracy": round(accuracy, 4),

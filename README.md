@@ -77,6 +77,11 @@ Loads the selected model from `temp/` (no Hub access at inference time) and runs
 on confusable intents (ES: 88.7% → 93.4%) at the cost of ~2.4x latency
 (longer prompt). Default: no descriptions.
 
+`--compile` enables `torch.compile` (a warmup/tracing call is excluded from timing).
+Measured on this CPU: **not worth it** — 65.7 s one-time tracing cost and steady-state
+latency went *up* (234.6 ms → 294.4 ms mean on ES). Keep it off for CPU; it is
+meant to pay off on GPU or large batches.
+
 **Metrics** (wall-clock, end-to-end per example):
 - Per-example `latency_ms` in each `predictions_*.jsonl` line
 - `metrics_*.json`: min / mean / median / p90 / p95 / p99 / max / stddev,
