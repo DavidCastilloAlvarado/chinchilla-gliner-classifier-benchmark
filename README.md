@@ -82,6 +82,38 @@ uv run locust -f stress/locustfile.py --headless -u 16 -r 16 -t 30s \
 curl -s http://127.0.0.1:8000/metrics | grep gliner_inference
 ```
 
+### Observed GPU stress benchmark
+
+A five-minute Locust run used 40 concurrent Locust virtual users (`-u 40`),
+with one FastAPI worker and one NVIDIA RTX 5060 Ti with 16 GB VRAM. The server
+used `N_CONCURRENCY=8`, meaning a maximum of eight requests per model
+microbatch:
+
+```bash
+uv run locust -f stress/locustfile.py \
+  --headless -u 40 -r 2 -t 300s \
+  -H http://127.0.0.1:8000
+```
+
+| Metric | Result |
+|---|---:|
+| Requests | 36,066 |
+| Failures | 0 (0.00%) |
+| Average response time | 315 ms |
+| Median response time | 320 ms |
+| Minimum response time | 34 ms |
+| Maximum response time | 703 ms |
+| Throughput | 120.28 requests/s |
+| Locust virtual users | 40 |
+| Maximum model microbatch | 8 requests |
+| FastAPI workers | 1 |
+| GPUs | 1 × RTX 5060 Ti 16 GB |
+
+Approximate Locust response-time percentiles: p50 320 ms, p90 330 ms, p95
+340 ms, p99 410 ms, p99.9 480 ms, p99.99 630 ms, and p100 700 ms. These are
+complete HTTP response times, including queueing, batching, model execution, and
+response handling; they are not the same as the Prometheus batch-duration metric.
+
 ### FastAPI environment variables
 
 | Variable | Default | Meaning |

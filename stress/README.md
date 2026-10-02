@@ -31,9 +31,11 @@ uv run locust \
   -H http://127.0.0.1:8000
 ```
 
-Open <http://127.0.0.1:8089>, set users to at least `N_CONCURRENCY`, and use a
-spawn rate that creates them within the batching window. For the default server
-configuration, start with 16 users and a spawn rate of 16 users/second.
+Open <http://127.0.0.1:8089> and configure Locust users independently from the
+server's `N_CONCURRENCY`. Locust `-u` is the number of concurrent virtual users;
+`N_CONCURRENCY` is the maximum number of requests inside one model microbatch.
+Use enough Locust users and a suitable spawn rate to create overlapping requests
+within the batching window.
 
 Headless run:
 
@@ -47,8 +49,63 @@ uv run locust \
   -H http://127.0.0.1:8000
 ```
 
-The default test uses the stored `banking_es` classification schema. To test
-client-provided classes and descriptions instead:
+The default test uses the stored `banking_es` classification schema.
+
+## RTX 5060 Ti benchmark: 40 concurrent users
+
+The following five-minute Locust run used one FastAPI worker on one NVIDIA RTX
+5060 Ti with 16 GB VRAM and one GPU. The server was configured with
+`N_CONCURRENCY=8`, meaning at most eight requests per model microbatch. The
+Locust load used `-u 40`, meaning 40 concurrent virtual users. It used the stored
+`banking_es` classification endpoint:
+
+```bash
+uv run locust \
+  -f stress/locustfile.py \
+  --headless \
+  -u 40 \
+  -r 2 \
+  -t 300s \
+  -H http://127.0.0.1:8000
+```
+
+| Metric | Result |
+|---|---:|
+| Requests | 36,066 |
+| Failures | 0 (0.00%) |
+| Average response time | 315 ms |
+| Median response time | 320 ms |
+| Minimum response time | 34 ms |
+| Maximum response time | 703 ms |
+| Throughput | 120.28 requests/s |
+| Failures/s | 0.00 |
+| Locust virtual users | 40 |
+| Maximum model microbatch | 8 requests |
+| FastAPI workers | 1 |
+| GPUs | 1 × RTX 5060 Ti 16 GB |
+
+Approximate response-time percentiles reported by Locust:
+
+| Percentile | Response time |
+|---:|---:|
+| p50 | 320 ms |
+| p66 | 330 ms |
+| p75 | 330 ms |
+| p80 | 330 ms |
+| p90 | 330 ms |
+| p95 | 340 ms |
+| p98 | 350 ms |
+| p99 | 410 ms |
+| p99.9 | 480 ms |
+| p99.99 | 630 ms |
+| p100 | 700 ms |
+
+This is client-observed HTTP latency, including queueing, batching, model
+execution, and response handling. It should not be compared directly with the
+Prometheus batch-duration histogram, which measures only model execution per
+batch. The run sustained approximately 120 requests/s with no failed requests.
+
+To test client-provided classes and descriptions instead:
 
 ```bash
 SERVER_MODE=adhoc uv run locust \

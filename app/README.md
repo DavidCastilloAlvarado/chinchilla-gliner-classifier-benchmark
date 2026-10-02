@@ -210,6 +210,32 @@ A timeout cannot force-kill a native PyTorch/CUDA thread. If the model itself
 hangs, the worker remains occupied, the bounded queue fills, and new requests
 receive `429`. Use process-level supervision for hard recovery.
 
+## Observed GPU stress benchmark
+
+A five-minute Locust run with 40 concurrent virtual users produced the following
+result using one FastAPI worker and one NVIDIA RTX 5060 Ti with 16 GB VRAM. The
+server used `N_CONCURRENCY=8`, meaning a maximum of eight requests per model
+microbatch:
+
+| Metric | Result |
+|---|---:|
+| Requests | 36,066 |
+| Failures | 0 (0.00%) |
+| Average response time | 315 ms |
+| Median response time | 320 ms |
+| Minimum response time | 34 ms |
+| Maximum response time | 703 ms |
+| Throughput | 120.28 requests/s |
+| Locust virtual users | 40 |
+| Maximum model microbatch | 8 requests |
+| FastAPI workers | 1 |
+| GPUs | 1 × RTX 5060 Ti 16 GB |
+
+Approximate response-time percentiles were p50 320 ms, p90 330 ms, p95 340 ms,
+p99 410 ms, p99.9 480 ms, p99.99 630 ms, and p100 700 ms. These are complete
+HTTP response times, including queueing and model execution. They are distinct
+from the Prometheus batch-duration metric, which measures model execution only.
+
 ## Prometheus observability
 
 `GET /metrics` exposes Prometheus text-format metrics. The key proof-of-batching
