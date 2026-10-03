@@ -27,10 +27,16 @@ The default configuration serves the locally downloaded multilingual Decide
 checkpoint on CPU:
 
 ```bash
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+uv run server
 ```
 
-For the RTX 5060 Ti benchmark configuration:
+For the RTX 5060 Ti GPU configuration with model compilation enabled:
+
+```bash
+uv run server-gpu
+```
+
+The equivalent explicit command is:
 
 ```bash
 MODEL_NAME=decide \

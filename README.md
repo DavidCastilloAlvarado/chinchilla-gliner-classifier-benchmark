@@ -68,9 +68,11 @@ CUDA model loading, optional `torch.compile`, and a configurable
 3 ms batching window.
 
 ```bash
-# CPU by default; use GPU_MODE=cuda for NVIDIA inference
-MODEL_NAME=decide GPU_MODE=cuda COMPILE_MODEL=true \
-  uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Default CPU server
+uv run server
+
+# NVIDIA GPU server with model compilation enabled
+uv run server-gpu
 ```
 
 See [`app/README.md`](app/README.md) for the endpoint contracts, app JSON
