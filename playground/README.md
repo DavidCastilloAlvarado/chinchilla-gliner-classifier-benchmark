@@ -89,25 +89,43 @@ uv run doom
 ```
 
 The default scenario is `deadly_corridor.cfg`, which provides multiple enemies
-and navigable space. The runner enables forward/backward movement, turning,
-strafing, and attack buttons even when a scenario exposes only a subset of them.
-Turn inputs are one-tic pulses followed by neutral input, so buttons are never
-held indefinitely. When living monsters are visible, the runner aims at them and
-fires only when their screen bounding box is close to the crosshair. It clears all
-currently visible living monsters before resuming forward navigation. The
-nearest living monster is prioritized using its world position, rather than
-choosing only by screen alignment. However, any visible monster already centered
-under the crosshair is fired at immediately, even if another monster is closer.
-When multiple nearest monsters are equidistant, SystemOne chooses which side to
-engage instead of the controller selecting one. In `deadly_corridor.cfg`, the visible
-`GreenArmor`/vest at the corridor end is the goal; once enemies are cleared, the
-runner turns toward it and advances until the episode completes. In defensive
-maps such as `defend_the_line.cfg`, there is no navigation goal and forward
-movement is disabled; the runner only turns and fires while defending the line.
-Weapon pickups are deliberately ignored. Dead corpses are filtered out, and
-position telemetry detects forward movement that made no progress. The recovery turn keeps
-rotating in one direction instead of alternating left/right and canceling itself
-at a wall.
+and navigable space. SystemOne receives a compact, categorical state rather than
+raw coordinates or screen data:
+
+```json
+{
+  "player": {"health": "normal", "armor": "protected", "ammo": "available"},
+  "enemies": [
+    {"id": "enemy_1", "type": "Zombieman", "position": "left", "shoot_status": "aim_required", "distance": "near"},
+    {"id": "enemy_2", "type": "Imp", "position": "on_spot", "shoot_status": "ready_to_shoot", "distance": "medium"}
+  ],
+  "goal": [{"type": "GreenArmor", "position": "right", "distance": "far"}],
+  "mode": "navigate",
+  "combat_status": "shoot_ready",
+  "movement": {"status": "blocked_by_enemy", "goal_direction": "right", "goal_distance": "far", "last_action": "turn_left", "progress": "normal"}
+}
+```
+
+Enemy and goal positions use the same normalized screen tags: `left`,
+`on_spot`, or `right`. The center band (`0.4`–`0.6` of screen width) is
+`on_spot`; an enemy there is tagged `ready_to_shoot`. Distance is categorical:
+`near` (up to 128 world units), `medium` (up to 320), or `far`. Health, armor,
+and ammo are also categorical. Dead enemies and weapons are excluded; raw pixel
+coordinates, world coordinates, labels, and screen ASCII are not sent to the model.
+
+The movement summary uses discrete states too: `blocked_by_enemy`,
+`blocked_by_defense`, or `allowed`, plus the goal's `left`/`right`/`on_spot`
+direction. While an enemy is visible, code blocks translation; defensive maps
+block it at all times.
+
+Every SystemOne choice is one key: `move_forward`, `move_backward`, `move_left`,
+`move_right`, `turn_left`, `turn_right`, `attack`, or `wait`. `combat_status` is
+`shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. `shoot_ready`
+executes ATTACK; otherwise, the controller blocks attacks and turns toward a side
+when all off-center enemies are on that side. If enemies are on both sides,
+SystemOne chooses which side to turn toward. After a shot, another turn is required
+before shooting again while off-center enemies remain. Weapon pickups are ignored,
+and each selected key is released before the next decision.
 
 ### ViZDoom scenarios/maps
 
@@ -173,9 +191,8 @@ shell. `SYSTEMONE_URL` is preferred; the two legacy names are fallback aliases.
 | `DOOM_MAX_SECONDS` | `30` | Maximum wall-clock duration of the run. |
 | `DOOM_EPISODES` | `0` | Maximum episodes; `0` means restart until the time limit. |
 | `DOOM_FRAME_SKIP` | `4` | Tics allocated to each decision interval. |
-| `DOOM_TURN_TICS` | `1` | Tics for a turn pulse. |
-| `DOOM_ATTACK_TICS` | `4` | Tics for an attack; enough for the weapon to fire. |
-| `DOOM_AIM_TOLERANCE` | `0.02` | Fraction of screen width allowed between target center and crosshair. |
+| `DOOM_TURN_TICS` | `1` | Tics for a one-key turn pulse. |
+| `DOOM_ATTACK_TICS` | `4` | Tics for a one-key attack pulse; enough for the weapon to fire. |
 | `DOOM_SYSTEMONE_TIMEOUT_SECONDS` | `5` | HTTP timeout for each SystemOne decision. |
 | `DOOM_MODEL` | `DINO_MODEL` or `fastino/GLiNER2.5-multi-Decide` | SystemOne model identifier. |
 
@@ -187,7 +204,6 @@ DOOM_MAX_SECONDS=300 \\
 DOOM_FRAME_SKIP=4 \\
 DOOM_TURN_TICS=1 \\
 DOOM_ATTACK_TICS=4 \\
-DOOM_AIM_TOLERANCE=0.02 \\
 uv run doom
 ```
 

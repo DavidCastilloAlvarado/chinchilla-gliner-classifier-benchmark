@@ -24,31 +24,31 @@ from playground.test_dino import SystemOneClient
 
 
 ACTION_BUTTONS = {
+    # Each choice maps to one physical button; translation and rotation are
+    # separate decisions, never combined with each other or with attack.
     "move_forward": "MOVE_FORWARD",
     "move_backward": "MOVE_BACKWARD",
-    # Turning is a rotation pulse only. Movement is a separate action.
+    "move_left": "MOVE_LEFT",
+    "move_right": "MOVE_RIGHT",
     "turn_left": "TURN_LEFT",
     "turn_right": "TURN_RIGHT",
-    # Internal navigation corrections: rotate and advance for one short tic.
-    "advance_turn_left": ("TURN_LEFT", "MOVE_FORWARD"),
-    "advance_turn_right": ("TURN_RIGHT", "MOVE_FORWARD"),
-    "strafe_left": "MOVE_LEFT",
-    "strafe_right": "MOVE_RIGHT",
     "attack": "ATTACK",
-    "forward_attack": ("MOVE_FORWARD", "ATTACK"),
     "wait": (),
 }
 
+TRANSLATION_ACTIONS = frozenset(
+    {"move_forward", "move_backward", "move_left", "move_right"}
+)
+
 ACTION_CRITERIA = {
-    "move_forward": "Walk forward through the Doom level.",
-    "move_backward": "Back away from danger or reposition.",
-    "turn_left": "Briefly rotate left to reorient, then release the button.",
-    "turn_right": "Briefly rotate right to reorient, then release the button.",
-    "strafe_left": "Strafe left while keeping the current facing direction.",
-    "strafe_right": "Strafe right while keeping the current facing direction.",
-    "attack": "Fire the current weapon at a visible or nearby enemy.",
-    "forward_attack": "Move forward while firing at a visible or nearby enemy.",
-    "wait": "Do not press a button for this frame.",
+    "move_forward": "Press only MOVE_FORWARD to walk forward when no living enemy is visible and navigation is appropriate.",
+    "move_backward": "Press only MOVE_BACKWARD to retreat when no living enemy is visible.",
+    "move_left": "Press only MOVE_LEFT to strafe left when no living enemy is visible.",
+    "move_right": "Press only MOVE_RIGHT to strafe right when no living enemy is visible.",
+    "turn_left": "Press only TURN_LEFT for a short pulse to center the view on a visible enemy or reorient.",
+    "turn_right": "Press only TURN_RIGHT for a short pulse to center the view on a visible enemy or reorient.",
+    "attack": "Press only ATTACK when combat_status is shoot_ready; otherwise turn to aim before firing.",
+    "wait": "Press no buttons for this decision.",
 }
 
 
@@ -70,32 +70,6 @@ def _env_int(name: str, default: int) -> int:
         return int(value)
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer, got {value!r}") from exc
-
-
-def _screen_ascii(screen_buffer: Any, width: int = 12, height: int = 6) -> str:
-    """Compact the current visual observation into text for SystemOne."""
-
-    if screen_buffer is None:
-        return ""
-    image = np.asarray(screen_buffer)
-    if image.ndim == 3 and image.shape[0] in (1, 3, 4) and image.shape[-1] not in (1, 3, 4):
-        image = np.moveaxis(image, 0, -1)
-    if image.ndim == 3:
-        image = image.mean(axis=2)
-    if image.ndim != 2 or image.size == 0:
-        return ""
-
-    y_indices = np.linspace(0, image.shape[0] - 1, height).astype(int)
-    x_indices = np.linspace(0, image.shape[1] - 1, width).astype(int)
-    sample = image[np.ix_(y_indices, x_indices)].astype(float)
-    low, high = float(sample.min()), float(sample.max())
-    if high > low:
-        sample = (sample - low) / (high - low)
-    palette = " .:-=+*#%@"
-    rows = []
-    for row in sample:
-        rows.append("".join(palette[min(len(palette) - 1, int(pixel * len(palette)))] for pixel in row))
-    return "\n".join(rows)
 
 
 MONSTER_NAME_HINTS = (
@@ -121,29 +95,6 @@ def _iter_labels(labels: Any) -> list[Any]:
     return [] if labels is None else list(labels)
 
 
-def _label_state(labels: Any) -> list[dict[str, Any]]:
-    observations: list[dict[str, Any]] = []
-    for label in _iter_labels(labels)[:24]:
-        category = str(getattr(label, "object_category", "unknown"))
-        # Weapon pickups are intentionally outside the controller's scope.
-        if category.lower() == "weapon":
-            continue
-        observations.append(
-            {
-                "object": str(getattr(label, "object_name", "unknown")),
-                "category": category,
-                "x": round(float(getattr(label, "object_position_x", 0.0)), 2),
-                "y": round(float(getattr(label, "object_position_y", 0.0)), 2),
-                "screen_x": round(float(getattr(label, "x", 0.0)), 2),
-                "screen_y": round(float(getattr(label, "y", 0.0)), 2),
-                "screen_width": round(float(getattr(label, "width", 0.0)), 2),
-                "screen_height": round(float(getattr(label, "height", 0.0)), 2),
-                "health": round(float(getattr(label, "object_health", 0.0)), 2),
-            }
-        )
-    return observations
-
-
 def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, Any]]:
     """Return visible monsters with their horizontal aiming error."""
 
@@ -165,8 +116,9 @@ def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, An
             continue
         left = float(getattr(label, "x", 0.0))
         width = float(getattr(label, "width", 0.0))
-        # Ignore one-pixel edge remnants; use a real visible target instead.
-        if width < 4:
+        # Even a partially clipped enemy counts as visible for the combat
+        # movement lock; do not walk while any living monster label is present.
+        if width <= 0:
             continue
         center_x = left + width / 2.0
         monsters.append(
@@ -179,7 +131,8 @@ def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, An
                 "screen_width": round(width, 2),
             }
         )
-    return sorted(monsters, key=lambda monster: abs(monster["horizontal_error_px"]))
+    # Keep the state list deterministic without ranking targets in controller code.
+    return sorted(monsters, key=lambda monster: (monster["object"], monster["world_x"], monster["world_y"]))
 
 
 def _visible_goals(labels: Any, screen_width: int = 320) -> list[dict[str, Any]]:
@@ -198,9 +151,13 @@ def _visible_goals(labels: Any, screen_width: int = 320) -> list[dict[str, Any]]
         if width < 2:
             continue
         center_x = float(getattr(label, "x", 0.0)) + width / 2.0
+        world_x = float(getattr(label, "object_position_x", 0.0))
+        world_y = float(getattr(label, "object_position_y", 0.0))
         goals.append(
             {
                 "object": name,
+                "world_x": round(world_x, 2),
+                "world_y": round(world_y, 2),
                 "screen_center_x": round(center_x, 2),
                 "horizontal_error_px": round(center_x - midpoint, 2),
                 "screen_width": round(width, 2),
@@ -214,71 +171,109 @@ def _button_name(button: Any) -> str:
     return name or str(button).split(".")[-1]
 
 
-def doom_state(game: Any, state: Any, episode: int) -> dict[str, Any]:
-    variables: dict[str, float] = {}
-    available_variables = list(game.get_available_game_variables())
+def _game_variables(game: Any, state: Any) -> dict[str, float]:
+    available = list(game.get_available_game_variables())
     values = list(state.game_variables) if state.game_variables is not None else []
-    for variable, value in zip(available_variables, values):
-        variables[str(variable).split(".")[-1]] = round(float(value), 3)
+    return {
+        str(variable).split(".")[-1]: float(value)
+        for variable, value in zip(available, values)
+    }
 
+
+def _position_tag(center_x: float, screen_width: int) -> str:
+    """Normalize horizontal position into left / on_spot / right."""
+
+    normalized_x = center_x / max(screen_width, 1)
+    if normalized_x < 0.4:
+        return "left"
+    if normalized_x > 0.6:
+        return "right"
+    return "on_spot"
+
+
+def _distance_tag(distance: float) -> str:
+    if distance <= 128:
+        return "near"
+    if distance <= 320:
+        return "medium"
+    return "far"
+
+
+def _combat_status(enemies: list[dict[str, Any]], must_aim_after_shot: bool) -> str:
+    if not enemies:
+        return "no_enemies"
+    if must_aim_after_shot and any(enemy["position"] != "on_spot" for enemy in enemies):
+        return "turn_after_shot"
+    if any(enemy["shoot_status"] == "ready_to_shoot" for enemy in enemies):
+        return "shoot_ready"
+    return "aim_required"
+
+
+def _level_tag(value: float, *, critical: float, low: float) -> str:
+    if value <= critical:
+        return "critical"
+    if value <= low:
+        return "low"
+    return "normal"
+
+
+def _player_position(game: Any, state: Any) -> tuple[float, float, float] | None:
+    variables = _game_variables(game, state)
+    keys = ("POSITION_X", "POSITION_Y", "POSITION_Z")
+    if not all(key in variables for key in keys):
+        return None
+    return tuple(variables[key] for key in keys)
+
+
+def doom_state(game: Any, state: Any, episode: int | None = None) -> dict[str, Any]:
+    """Build a compact discrete state for SystemOne."""
+
+    variables = _game_variables(game, state)
     screen = np.asarray(state.screen_buffer) if state.screen_buffer is not None else None
     screen_width = int(screen.shape[-1]) if screen is not None and screen.ndim >= 2 else 320
-    visible_monsters = _visible_monsters(state.labels, screen_width)
     player_x = variables.get("POSITION_X", 0.0)
     player_y = variables.get("POSITION_Y", 0.0)
-    # Prioritize the nearest living monster, not merely the one closest to the
-    # crosshair. This prevents a farther target from delaying a nearby threat.
-    for monster in visible_monsters:
-        monster["distance_from_player"] = round(
-            ((monster["world_x"] - player_x) ** 2 + (monster["world_y"] - player_y) ** 2) ** 0.5,
-            2,
+
+    enemies = []
+    for index, monster in enumerate(_visible_monsters(state.labels, screen_width), start=1):
+        position = _position_tag(monster["screen_center_x"], screen_width)
+        distance = (
+            (monster["world_x"] - player_x) ** 2
+            + (monster["world_y"] - player_y) ** 2
+        ) ** 0.5
+        enemies.append(
+            {
+                "id": f"enemy_{index}",
+                "type": monster["object"],
+                "position": position,
+                "shoot_status": "ready_to_shoot" if position == "on_spot" else "aim_required",
+                "distance": _distance_tag(distance),
+            }
         )
-    visible_monsters.sort(
-        key=lambda monster: (
-            monster["distance_from_player"],
-            abs(monster["horizontal_error_px"]),
+
+    goals = []
+    for goal in _visible_goals(state.labels, screen_width):
+        distance = ((goal["world_x"] - player_x) ** 2 + (goal["world_y"] - player_y) ** 2) ** 0.5
+        goals.append(
+            {
+                "type": goal["object"],
+                "position": _position_tag(goal["screen_center_x"], screen_width),
+                "distance": _distance_tag(distance),
+            }
         )
-    )
-    visible_goals = _visible_goals(state.labels, screen_width)
-    target_distance_tolerance = _env_float("DOOM_TARGET_DISTANCE_TOLERANCE", 8.0)
-    nearest_distance = visible_monsters[0]["distance_from_player"] if visible_monsters else None
-    closest_monsters = (
-        [
-            monster["object"]
-            for monster in visible_monsters
-            if monster["distance_from_player"] <= nearest_distance + target_distance_tolerance
-        ]
-        if nearest_distance is not None
-        else []
-    )
-    # Keep monster targets close to the crosshair; Doom's hitscan shot is narrow.
-    aim_tolerance = _env_float("DOOM_AIM_TOLERANCE", 0.02)
-    monsters_in_front = [
-        monster["object"]
-        for monster in visible_monsters
-        if abs(monster["horizontal_error_px"]) <= screen_width * aim_tolerance
-    ]
-    goals_in_front = [
-        goal["object"]
-        for goal in visible_goals
-        if abs(goal["horizontal_error_px"]) <= screen_width * aim_tolerance
-    ]
+
+    ammo = sum(value for key, value in variables.items() if key.startswith("AMMO"))
+    ammo_status = "empty" if ammo <= 0 else "low" if ammo <= 10 else "available"
+    armor = variables.get("ARMOR", 0.0)
+    armor_status = "none" if armor <= 0 else "low" if armor <= 25 else "protected"
     return {
-        "game": "Doom 1 via ViZDoom",
-        "episode": episode,
-        "episode_time": int(game.get_episode_time()),
-        "total_reward": round(float(game.get_total_reward()), 3),
-        "variables": variables,
-        "available_buttons": [_button_name(button) for button in game.get_available_buttons()],
-        "visible_labels": _label_state(state.labels),
-        "visible_monsters": visible_monsters,
-        "monsters_in_front": monsters_in_front,
-        "closest_monsters": closest_monsters,
-        "target_distance_tolerance": target_distance_tolerance,
-        "visible_goals": visible_goals,
-        "goals_in_front": goals_in_front,
-        "aim_tolerance": aim_tolerance,
-        "screen_ascii": _screen_ascii(state.screen_buffer),
+        "player": {
+            "health": _level_tag(variables.get("HEALTH", 100.0), critical=25, low=50),
+            "armor": armor_status,
+            "ammo": ammo_status,
+        },
+        "enemies": enemies,
+        "goal": goals,
     }
 
 
@@ -291,24 +286,70 @@ def action_vector(game: Any, action_name: str) -> list[int]:
     return [int(_button_name(button) in requested_names) for button in available]
 
 
-def _player_position(state: dict[str, Any]) -> tuple[float, float, float] | None:
-    variables = state.get("variables", {})
-    keys = ("POSITION_X", "POSITION_Y", "POSITION_Z")
-    if not all(key in variables for key in keys):
-        return None
-    return tuple(float(variables[key]) for key in keys)
+def apply_movement_safety(
+    action_name: str,
+    *,
+    visible_enemy_count: int,
+    defensive_scenario: bool,
+) -> tuple[str, str | None]:
+    """Block translation in combat and on stationary defense maps."""
+
+    if action_name in TRANSLATION_ACTIONS and visible_enemy_count:
+        return "wait", "no_movement_while_enemies_visible"
+    if action_name in TRANSLATION_ACTIONS and defensive_scenario:
+        return "wait", "stationary_defense_map"
+    return action_name, None
+
+
+def apply_combat_safety(
+    action_name: str,
+    combat_status: str,
+    enemies: list[dict[str, Any]],
+    last_action: str,
+) -> tuple[str, str | None]:
+    """Apply the discrete aim/shoot contract without combining buttons."""
+
+    if combat_status == "shoot_ready":
+        if action_name != "attack":
+            return "attack", "shoot_ready_priority"
+        return action_name, None
+
+    sides = [enemy["position"] for enemy in enemies if enemy["position"] in {"left", "right"}]
+    if not sides:
+        return ("wait", f"attack_blocked_{combat_status}") if action_name == "attack" else (action_name, None)
+
+    side_set = set(sides)
+    if side_set == {"left"}:
+        required_turn = "turn_left"
+    elif side_set == {"right"}:
+        required_turn = "turn_right"
+    elif action_name in {"turn_left", "turn_right"}:
+        required_turn = action_name
+    else:
+        left_count = sides.count("left")
+        right_count = sides.count("right")
+        if left_count != right_count:
+            required_turn = "turn_left" if left_count > right_count else "turn_right"
+        else:
+            required_turn = "turn_right" if last_action == "turn_left" else "turn_left"
+
+    if action_name != required_turn:
+        return required_turn, f"aim_toward_{required_turn.removeprefix('turn_')}"
+    return action_name, None
+
+
+def _attack_duration(frame_skip: int) -> int:
+    return max(frame_skip, max(1, _env_int("DOOM_ATTACK_TICS", 4)))
 
 
 def _active_tics(action_name: str, frame_skip: int) -> int:
-    """Return how long a discrete button pulse is held before explicit release."""
+    """Return the bounded single-button pulse duration."""
 
     frame_skip = max(1, frame_skip)
-    if action_name in {"turn_left", "turn_right", "advance_turn_left", "advance_turn_right"}:
+    if action_name in {"turn_left", "turn_right"}:
         return min(frame_skip, max(1, _env_int("DOOM_TURN_TICS", 1)))
     if action_name == "attack":
-        # The weapon needs several tics to complete its firing state; a one-tic
-        # click can be released before a projectile is spawned.
-        return min(frame_skip, max(1, _env_int("DOOM_ATTACK_TICS", 4)))
+        return _attack_duration(frame_skip)
     return frame_skip
 
 
@@ -388,10 +429,9 @@ def run_doom() -> dict[str, Any]:
     started = time.monotonic()
     last_state: dict[str, Any] = {}
     last_action = "none"
-    turn_streak = 0
     previous_position: tuple[float, float, float] | None = None
     stuck_steps = 0
-    stuck_turn_action: str | None = None
+    must_aim_after_shot = False
     try:
         game.new_episode()
         while time.monotonic() - started < max_seconds:
@@ -404,61 +444,64 @@ def run_doom() -> dict[str, Any]:
                 game.new_episode()
                 previous_position = None
                 stuck_steps = 0
-                stuck_turn_action = None
-                turn_streak = 0
+                last_action = "none"
+                last_state = {}
+                must_aim_after_shot = False
 
             observation = game.get_state()
             if observation is None:
                 continue
-            current_state = doom_state(game, observation, episodes_finished + 1)
-            position = _player_position(current_state)
-            movement_actions = {
-                "move_forward",
-                "move_backward",
-                "strafe_left",
-                "strafe_right",
-                "forward_attack",
-                "advance_turn_left",
-                "advance_turn_right",
-            }
-            if position is not None and previous_position is not None and last_action in movement_actions:
+            current_state = doom_state(game, observation)
+            position = _player_position(game, observation)
+            if position is not None and previous_position is not None and last_action in TRANSLATION_ACTIONS:
                 distance = sum((a - b) ** 2 for a, b in zip(position, previous_position)) ** 0.5
-                if distance < 0.5:
-                    stuck_steps += 1
-                    # Keep turning in one direction. Alternating left/right
-                    # every tic cancels the rotation and leaves the player at
-                    # the wall forever.
-                    if stuck_turn_action is None:
-                        stuck_turn_action = "advance_turn_left"
-                else:
-                    stuck_steps = 0
-                    stuck_turn_action = None
-            elif last_action not in movement_actions:
+                stuck_steps = stuck_steps + 1 if distance < 0.5 else 0
+            elif last_action not in TRANSLATION_ACTIONS:
                 stuck_steps = 0
-                stuck_turn_action = None
             previous_position = position
-            current_state["scenario"] = scenario_id
-            current_state["defensive_mode"] = defensive_scenario
-            current_state["last_action"] = last_action
-            current_state["turn_streak"] = turn_streak
-            current_state["stuck_steps"] = stuck_steps
-            current_state["stuck_turn_action"] = stuck_turn_action
+            enemy_visible = bool(current_state["enemies"])
+            goal = current_state["goal"][0] if current_state["goal"] else None
+            if enemy_visible:
+                movement_status = "blocked_by_enemy"
+            elif defensive_scenario:
+                movement_status = "blocked_by_defense"
+            else:
+                movement_status = "allowed"
+            current_state["mode"] = "stationary_defense" if defensive_scenario else "navigate"
+            off_spot_enemies = [
+                enemy for enemy in current_state["enemies"]
+                if enemy["position"] != "on_spot"
+            ]
+            if must_aim_after_shot and not off_spot_enemies:
+                must_aim_after_shot = False
+            combat_status = _combat_status(current_state["enemies"], must_aim_after_shot)
+            current_state["combat_status"] = combat_status
+            current_state["movement"] = {
+                "status": movement_status,
+                "goal_direction": goal["position"] if goal else "not_visible",
+                "goal_distance": goal["distance"] if goal else "not_visible",
+                "last_action": last_action,
+                "progress": "stuck" if stuck_steps >= 2 else "normal",
+            }
             decision_started = time.monotonic()
             model_action, payload, response = client.choose(
                 current_state,
                 question_id="doom_action",
                 instructions=(
-                    "Choose one action for the next Doom game frame using the visual "
-                    "observation, visible labels, health, ammunition, and reward. "
-                    "Prioritize the closest monster unless another visible monster is "
-                    "already centered and ready to kill. If multiple closest monsters "
-                    "are equidistant, choose which side to engage. A monster must be "
-                    "centered under the crosshair before attacking; if it is left or "
-                    "right of center, turn toward it first. After "
-                    "all visible monsters are cleared, follow the end-of-level goal "
-                    "when it is visible. Ignore weapon pickups completely. Prefer "
-                    "forward movement when no enemy or goal is visible. Return exactly "
-                    "one criterion."
+                    "Choose exactly one action (one key). State values are discrete. "
+                    "HARD SHOOTING RULE: when combat_status is shoot_ready, attack "
+                    "now. In every other combat_status, do not attack. If status is "
+                    "aim_required, turn toward an enemy tagged left or right. If it is "
+                    "turn_after_shot, do not attack again yet; take a turn decision "
+                    "toward another off-center enemy first. An enemy tagged on_spot "
+                    "is ready_to_shoot. left means turn_left; right means turn_right. "
+                    "Prioritize near enemies, but do not over-rank small distance "
+                    "differences. When movement.status is blocked_by_enemy or "
+                    "blocked_by_defense, never choose move_forward, move_backward, "
+                    "move_left, or move_right. When movement.status is allowed and "
+                    "there are no enemies, turn toward movement.goal_direction; move "
+                    "forward when it is on_spot. If mode is stationary_defense, never "
+                    "move. Ignore weapons. Return exactly one criterion."
                 ),
                 criteria=ACTION_CRITERIA,
             )
@@ -467,71 +510,21 @@ def run_doom() -> dict[str, Any]:
                 model_action = "wait"
             action_name = model_action
             override_reason = None
-            # Aim before firing: turn toward a visible monster until its label
-            # overlaps the crosshair, then fire. This does not trust a generic
-            # "monster visible" signal because Doom's hitscan weapon needs aim.
-            visible_monsters = current_state["visible_monsters"]
-            if visible_monsters:
-                centered_monsters = set(current_state["monsters_in_front"])
-                if centered_monsters:
-                    # A kill-ready enemy takes precedence over distance. Do not
-                    # turn toward a farther-away priority target while a monster
-                    # is already under the crosshair.
-                    action_name = "attack"
-                    override_reason = "monster_centered"
-                else:
-                    closest_names = set(current_state["closest_monsters"])
-                    if len(closest_names) > 1:
-                        # Multiple nearest enemies are a real decision for
-                        # SystemOne. Preserve its left/right choice instead of
-                        # selecting one target in controller code.
-                        if action_name in {"turn_left", "turn_right"}:
-                            override_reason = "systemone_tie_turn"
-                        else:
-                            action_name = "wait"
-                            override_reason = "systemone_tie_not_aimed"
-                    else:
-                        target = visible_monsters[0]
-                        if target["horizontal_error_px"] < 0:
-                            action_name = "turn_left"
-                            override_reason = "aim_left"
-                        else:
-                            action_name = "turn_right"
-                            override_reason = "aim_right"
-            # If position telemetry says a movement action made no progress,
-            # turn out of the obstacle instead of repeatedly pressing forward.
-            elif stuck_steps:
-                if defensive_scenario:
-                    action_name = "turn_left" if stuck_turn_action == "advance_turn_left" else "turn_right"
-                else:
-                    action_name = stuck_turn_action or "advance_turn_left"
-                override_reason = "movement_stuck"
-            elif current_state["visible_goals"] and not defensive_scenario:
-                goal = current_state["visible_goals"][0]
-                if goal["object"] in current_state["goals_in_front"]:
-                    action_name = "move_forward"
-                    override_reason = "goal_centered"
-                elif goal["horizontal_error_px"] < 0:
-                    action_name = "advance_turn_left"
-                    override_reason = "goal_left"
-                else:
-                    action_name = "advance_turn_right"
-                    override_reason = "goal_right"
-            elif defensive_scenario and action_name == "move_forward":
-                action_name = "wait"
-                override_reason = "defensive_no_forward"
-            elif action_name == "forward_attack":
-                # There is no target in view, so do not waste an attack while
-                # navigating; reserve shooting for the visible-target branch.
-                action_name = "wait" if defensive_scenario else "move_forward"
-                override_reason = "defensive_no_forward" if defensive_scenario else "no_visible_target"
-            # A turn is a one-tic pulse. Require a movement/non-turn decision
-            # before allowing another turn pulse, preventing repeated model
-            # choices from becoming a continuous camera spin.
-            elif turn_streak and action_name in {"turn_left", "turn_right"}:
-                action_name = "wait" if defensive_scenario else "move_forward"
-                override_reason = "defensive_no_forward" if defensive_scenario else "turn_cooldown"
-            turn_streak = turn_streak + 1 if action_name in {"turn_left", "turn_right"} else 0
+            # Enforce unambiguous discrete combat states; SystemOne selects a
+            # side when enemies appear on both sides and owns goal navigation.
+            action_name, override_reason = apply_movement_safety(
+                action_name,
+                visible_enemy_count=len(current_state["enemies"]),
+                defensive_scenario=defensive_scenario,
+            )
+            action_name, combat_override = apply_combat_safety(
+                action_name,
+                current_state["combat_status"],
+                current_state["enemies"],
+                last_action,
+            )
+            override_reason = combat_override or override_reason
+
             last_action = action_name
             vector = action_vector(game, action_name)
             executed_buttons = [
@@ -541,11 +534,16 @@ def run_doom() -> dict[str, Any]:
             ]
             active_tics = _active_tics(action_name, frame_skip)
             reward = game.make_action(vector, active_tics)
-            release_tics = max(0, frame_skip - active_tics)
-            if release_tics:
-                # Explicitly release every button for the rest of the decision
-                # interval. The next decision starts from a neutral input state.
-                reward += game.make_action([0] * len(vector), release_tics)
+            # Always send an explicit neutral action to release the key before
+            # the next SystemOne decision, including attack pulses.
+            release_tics = max(1, frame_skip - active_tics)
+            reward += game.make_action([0] * len(vector), release_tics)
+            if action_name in {"turn_left", "turn_right"}:
+                must_aim_after_shot = False
+            elif action_name == "attack" and off_spot_enemies:
+                # After one shot, require a new aim decision while other
+                # visible enemies remain off-center.
+                must_aim_after_shot = True
             actions_taken += 1
             last_state = current_state
             print(
