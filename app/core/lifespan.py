@@ -35,15 +35,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     model = ModelService(settings)
     model.load()
 
-    warmup_seconds = None
-    if settings.compile_model:
-        operation = registry.first_operation() or {
-            "kind": "classification",
-            "labels": ["warmup"],
-            "multi_label": False,
-            "threshold": 0.5,
-        }
-        warmup_seconds = model.warmup(operation)
+    # Always execute one real inference before accepting traffic. This primes
+    # CUDA lazy initialization and model kernels; when torch.compile is enabled,
+    # it also traces the loaded model before the first user request arrives.
+    warmup_operation = registry.first_operation() or {
+        "kind": "classification",
+        "labels": ["warmup"],
+        "multi_label": False,
+        "threshold": 0.5,
+    }
+    warmup_seconds = model.warmup(warmup_operation)
 
     batcher = MicroBatcher(
         model=model,

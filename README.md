@@ -60,9 +60,11 @@ environment variables are used directly. The real `.env` is ignored by Git.
 ## FastAPI serving proof of concept
 
 The independent `app/` package serves the local GLiNER2 model with a modular
-FastAPI architecture and a small dynamic micro-batcher. It supports ad-hoc
-classification, stored app schemas for classification/extraction, CUDA model
-loading, optional `torch.compile`, and a configurable 10 ms batching window.
+FastAPI architecture and a small dynamic micro-batcher. It supports the
+TypeSafe/System One-compatible free endpoint at `POST /v1/systemone`, stored app
+schemas for classification/extraction, legacy GLiNER2-native ad-hoc
+classification, CUDA model loading, optional `torch.compile`, and a configurable
+10 ms batching window.
 
 ```bash
 # CPU by default; use GPU_MODE=cuda for NVIDIA inference
@@ -121,7 +123,7 @@ response handling; they are not the same as the Prometheus batch-duration metric
 | `MODEL_NAME` | `decide` | Local checkpoint: `base`, `multi`, or `decide` |
 | `MODEL_DIR` | `temp/<model>` | Override the local checkpoint directory |
 | `GPU_MODE` | `cpu` | Inference device: `cpu` or `cuda` |
-| `COMPILE_MODEL` | `false` | Run `torch.compile` and warmup during startup |
+| `COMPILE_MODEL` | `false` | Run `torch.compile` during startup; warmup always runs before readiness |
 | `BATCH_WINDOW_MS` | `10` | Maximum time to collect compatible requests |
 | `N_CONCURRENCY` | `8` | Maximum requests in one model batch |
 | `MAX_QUEUE_SIZE` | `256` | Maximum queued requests before HTTP 429 |
@@ -191,6 +193,22 @@ These configure [`stress/locustfile.py`](stress/locustfile.py):
 | `SERVER_MODE` | `stored` | `stored` uses an app schema; `adhoc` sends labels/descriptions |
 | `LOCUST_WAIT_MIN` | `0` | Minimum per-user pause, seconds |
 | `LOCUST_WAIT_MAX` | `0` | Maximum per-user pause, seconds |
+
+## FastAPI tests
+
+The app tests are managed by `uv` and run without loading a model checkpoint:
+
+```bash
+uv run tests
+```
+
+The `tests` command is a project script backed by pytest. The equivalent direct
+command is `uv run pytest -q`. The suite includes pytest validation tests and async `unittest` cases for routing,
+backpressure, micro-batching, and startup warmup. To run only unittest cases:
+
+```bash
+uv run python -m unittest discover -s tests -p 'test_*.py'
+```
 
 ## 1. Download the models into `temp/`
 

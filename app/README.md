@@ -1,7 +1,8 @@
 # GLiNER2 FastAPI proof of concept
 
 This directory is an independent serving application. It does not import the
-benchmark implementation under `src/`.
+benchmark implementation under `src/`. The System One endpoint contract is
+maintained in [`api/README.md`](api/README.md).
 
 ## Configuration loading
 
@@ -40,12 +41,123 @@ BATCH_WINDOW_MS=10 \
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-Compilation happens during startup. The readiness endpoint is not available as
-ready until model loading and the compilation warmup have finished.
+After loading, the server always runs one warmup inference before starting the
+batcher and marking readiness. When `COMPILE_MODEL=true`, this warmup also
+triggers model compilation/tracing. The readiness endpoint is not available as
+ready until model loading and warmup have finished.
+
+## Tests
+
+Run the FastAPI unit and schema tests through the project test command:
+
+```bash
+uv run tests
+```
+
+This is a project script backed by pytest. The equivalent direct command is
+`uv run pytest -q`. The async lifecycle and batching tests use `unittest.IsolatedAsyncioTestCase`
+inside the pytest suite. To run only the standard-library unittest cases:
+
+```bash
+uv run python -m unittest discover -s tests -p 'test_*.py'
+```
+
+The tests use fake model/batcher services for deterministic unit coverage; they
+do not require downloading or loading a model checkpoint.
 
 ## Endpoints
 
-### Ad-hoc classification
+### System One ad-hoc decisions
+
+The free-form endpoint follows the TypeSafe/System One interoperability shape at
+`POST /v1/systemone`, based on the [TypeSafe API reference](https://docs.typesafe.ai/api).
+The request contains one state and one or more independent named questions. `-u 40` in a Locust run means 40 client users; it is unrelated to
+`N_CONCURRENCY=8`, which caps each model microbatch at eight requests.
+The `model` field must be the actual repository identifier loaded by this server;
+the default `MODEL_NAME=decide` loads
+`fastino/GLiNER2.5-multi-Decide`. The other configured identifiers are
+`fastino/gliner2-base-v1` and `fastino/gliner2.5-multi-v1`.
+
+```bash
+curl -s http://localhost:8000/v1/systemone \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "fastino/GLiNER2.5-multi-Decide",
+    "state": {"ticket": "Checkout is failing."},
+    "questions": {
+      "team": {
+        "type": "choice",
+        "instructions": "Which team should handle this?",
+        "criteria": {
+          "frontend": "Rendering or browser issue",
+          "payments": "Checkout or payment issue",
+          "account": "Login or account issue"
+        }
+      },
+      "urgent": {
+        "type": "noul",
+        "instructions": "Is this urgent?"
+      },
+      "severity": {
+        "type": "score",
+        "instructions": "How severe is this?",
+        "criteria": ["Low", "Medium", "High"]
+      }
+    }
+  }'
+```
+
+The supported primitives are `choice`, `noul`, and `score`. The response keeps the
+question IDs and uses the industry answer fields: `choice` returns the selected
+option, `probabilities`, and `confidence`; `noul` returns a yes-probability from
+0 to 1; and `score` returns a probability-weighted score, `legend`,
+`probabilities`, and `confidence`.
+
+Example response shape:
+
+```json
+{
+  "model": "fastino/GLiNER2.5-multi-Decide",
+  "answers": {
+    "team": {
+      "type": "choice",
+      "choice": "payments",
+      "probabilities": {
+        "frontend": 0.03,
+        "payments": 0.93,
+        "account": 0.04
+      },
+      "confidence": 0.93
+    },
+    "urgent": {
+      "type": "noul",
+      "noul": 0.81
+    },
+    "severity": {
+      "type": "score",
+      "score": 1.75,
+      "legend": {"0": "Low", "1": "Medium", "2": "High"},
+      "probabilities": {"0": 0.05, "1": 0.15, "2": 0.80},
+      "confidence": 0.80
+    }
+  },
+  "usage": {
+    "input_tokens": 123,
+    "output_tokens": 0
+  }
+}
+```
+
+For the local runtime, `input_tokens` is an estimate from the loaded tokenizer
+and `output_tokens` is zero because GLiNER2 produces structured decisions rather
+than generated tokens. All questions evaluate the same state independently. The local adapter maps the state to GLiNER2 and
+returns no prose, reasoning trace, or tool calls. Invalid
+question types, missing criteria, and malformed score rubrics return FastAPI's
+normal HTTP 422 validation response. The existing `/api/v1/classify` endpoint is
+retained as a legacy GLiNER2-native endpoint; new free-form clients should use
+`/v1/systemone`.
+
+### Legacy ad-hoc classification
 
 Send candidate classes with optional descriptions:
 
@@ -186,7 +298,7 @@ shows whether a request actually shared a batch.
 | `MODEL_NAME` | `decide` | `base`, `multi`, or `decide` |
 | `MODEL_DIR` | `temp/<model>` | Override local model directory |
 | `GPU_MODE` | `cpu` | `cpu` or `cuda` |
-| `COMPILE_MODEL` | `false` | Compile and warm up during startup |
+| `COMPILE_MODEL` | `false` | Compile during startup; the model is always warmed up before readiness |
 | `BATCH_WINDOW_MS` | `10` | Maximum queueing window |
 | `N_CONCURRENCY` | `8` | Maximum requests per model batch |
 | `MAX_QUEUE_SIZE` | `256` | Hard cap on queued requests before HTTP 429 |
@@ -287,5 +399,4 @@ Health endpoints:
 - `GET /health/ready` — model, batcher, and environment readiness/configuration
 - `GET /metrics` — Prometheus metrics
 - `GET /api/doc` — Swagger UI
-- `GET /api/redoc` — ReDoc
-- `GET /api/openapi.json` — OpenAPI schema
+- `GET /api/openapi.json` — OpenAPI schema used by Swagger

@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 classifier = "classifier:main"
+tests = "pytest:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
@@ -26,4 +27,9 @@ build-backend = "uv_build"
 [dependency-groups]
 dev = [
     "locust>=2.46.6",
+    "pytest>=8.4.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

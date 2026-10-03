@@ -396,6 +396,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "locust" },
+    { name = "pytest" },
 ]
 
 [package.metadata]
@@ -410,7 +411,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "locust", specifier = ">=2.46.6" }]
+dev = [
+    { name = "locust", specifier = ">=2.46.6" },
+    { name = "pytest", specifier = ">=8.4.0" },
+]
 
 [[package]]
 name = "click"

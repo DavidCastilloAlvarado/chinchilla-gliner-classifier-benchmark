@@ -14,7 +14,7 @@ app = FastAPI(
     version="0.1.0",
     description="Micro-batched classification and extraction with local GLiNER2 models.",
     docs_url="/api/doc",
-    redoc_url="/api/redoc",
+    redoc_url=None,
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
