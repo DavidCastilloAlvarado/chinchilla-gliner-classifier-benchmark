@@ -172,6 +172,8 @@ def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, An
         monsters.append(
             {
                 "object": name,
+                "world_x": round(float(getattr(label, "object_position_x", 0.0)), 2),
+                "world_y": round(float(getattr(label, "object_position_y", 0.0)), 2),
                 "screen_center_x": round(center_x, 2),
                 "horizontal_error_px": round(center_x - midpoint, 2),
                 "screen_width": round(width, 2),
@@ -222,7 +224,33 @@ def doom_state(game: Any, state: Any, episode: int) -> dict[str, Any]:
     screen = np.asarray(state.screen_buffer) if state.screen_buffer is not None else None
     screen_width = int(screen.shape[-1]) if screen is not None and screen.ndim >= 2 else 320
     visible_monsters = _visible_monsters(state.labels, screen_width)
+    player_x = variables.get("POSITION_X", 0.0)
+    player_y = variables.get("POSITION_Y", 0.0)
+    # Prioritize the nearest living monster, not merely the one closest to the
+    # crosshair. This prevents a farther target from delaying a nearby threat.
+    for monster in visible_monsters:
+        monster["distance_from_player"] = round(
+            ((monster["world_x"] - player_x) ** 2 + (monster["world_y"] - player_y) ** 2) ** 0.5,
+            2,
+        )
+    visible_monsters.sort(
+        key=lambda monster: (
+            monster["distance_from_player"],
+            abs(monster["horizontal_error_px"]),
+        )
+    )
     visible_goals = _visible_goals(state.labels, screen_width)
+    target_distance_tolerance = _env_float("DOOM_TARGET_DISTANCE_TOLERANCE", 8.0)
+    nearest_distance = visible_monsters[0]["distance_from_player"] if visible_monsters else None
+    closest_monsters = (
+        [
+            monster["object"]
+            for monster in visible_monsters
+            if monster["distance_from_player"] <= nearest_distance + target_distance_tolerance
+        ]
+        if nearest_distance is not None
+        else []
+    )
     # Keep monster targets close to the crosshair; Doom's hitscan shot is narrow.
     aim_tolerance = _env_float("DOOM_AIM_TOLERANCE", 0.02)
     monsters_in_front = [
@@ -245,6 +273,8 @@ def doom_state(game: Any, state: Any, episode: int) -> dict[str, Any]:
         "visible_labels": _label_state(state.labels),
         "visible_monsters": visible_monsters,
         "monsters_in_front": monsters_in_front,
+        "closest_monsters": closest_monsters,
+        "target_distance_tolerance": target_distance_tolerance,
         "visible_goals": visible_goals,
         "goals_in_front": goals_in_front,
         "aim_tolerance": aim_tolerance,
@@ -303,6 +333,8 @@ def run_doom() -> dict[str, Any]:
     # deadly_corridor provides multiple enemies together with navigable space;
     # basic.cfg contains only a single target and ends quickly after it is killed.
     scenario_name = os.getenv("DOOM_SCENARIO", "deadly_corridor.cfg")
+    scenario_id = Path(scenario_name).name.lower()
+    defensive_scenario = scenario_id in {"defend_the_line.cfg", "defend_the_center.cfg"}
     scenario_path = Path(scenario_name)
     if not scenario_path.is_file():
         scenario_path = Path(vzd.scenarios_path) / scenario_name
@@ -405,6 +437,8 @@ def run_doom() -> dict[str, Any]:
                 stuck_steps = 0
                 stuck_turn_action = None
             previous_position = position
+            current_state["scenario"] = scenario_id
+            current_state["defensive_mode"] = defensive_scenario
             current_state["last_action"] = last_action
             current_state["turn_streak"] = turn_streak
             current_state["stuck_steps"] = stuck_steps
@@ -416,8 +450,11 @@ def run_doom() -> dict[str, Any]:
                 instructions=(
                     "Choose one action for the next Doom game frame using the visual "
                     "observation, visible labels, health, ammunition, and reward. "
-                    "A monster must be centered under the crosshair before attacking; "
-                    "if it is left or right of center, turn toward it first. After "
+                    "Prioritize the closest monster unless another visible monster is "
+                    "already centered and ready to kill. If multiple closest monsters "
+                    "are equidistant, choose which side to engage. A monster must be "
+                    "centered under the crosshair before attacking; if it is left or "
+                    "right of center, turn toward it first. After "
                     "all visible monsters are cleared, follow the end-of-level goal "
                     "when it is visible. Ignore weapon pickups completely. Prefer "
                     "forward movement when no enemy or goal is visible. Return exactly "
@@ -435,24 +472,41 @@ def run_doom() -> dict[str, Any]:
             # "monster visible" signal because Doom's hitscan weapon needs aim.
             visible_monsters = current_state["visible_monsters"]
             if visible_monsters:
-                target = visible_monsters[0]
-                if target["object"] in current_state["monsters_in_front"]:
-                    # Clear every currently visible threat before resuming
-                    # navigation. Do not walk into a centered enemy.
+                centered_monsters = set(current_state["monsters_in_front"])
+                if centered_monsters:
+                    # A kill-ready enemy takes precedence over distance. Do not
+                    # turn toward a farther-away priority target while a monster
+                    # is already under the crosshair.
                     action_name = "attack"
                     override_reason = "monster_centered"
-                elif target["horizontal_error_px"] < 0:
-                    action_name = "turn_left"
-                    override_reason = "aim_left"
                 else:
-                    action_name = "turn_right"
-                    override_reason = "aim_right"
+                    closest_names = set(current_state["closest_monsters"])
+                    if len(closest_names) > 1:
+                        # Multiple nearest enemies are a real decision for
+                        # SystemOne. Preserve its left/right choice instead of
+                        # selecting one target in controller code.
+                        if action_name in {"turn_left", "turn_right"}:
+                            override_reason = "systemone_tie_turn"
+                        else:
+                            action_name = "wait"
+                            override_reason = "systemone_tie_not_aimed"
+                    else:
+                        target = visible_monsters[0]
+                        if target["horizontal_error_px"] < 0:
+                            action_name = "turn_left"
+                            override_reason = "aim_left"
+                        else:
+                            action_name = "turn_right"
+                            override_reason = "aim_right"
             # If position telemetry says a movement action made no progress,
             # turn out of the obstacle instead of repeatedly pressing forward.
             elif stuck_steps:
-                action_name = stuck_turn_action or "advance_turn_left"
+                if defensive_scenario:
+                    action_name = "turn_left" if stuck_turn_action == "advance_turn_left" else "turn_right"
+                else:
+                    action_name = stuck_turn_action or "advance_turn_left"
                 override_reason = "movement_stuck"
-            elif current_state["visible_goals"]:
+            elif current_state["visible_goals"] and not defensive_scenario:
                 goal = current_state["visible_goals"][0]
                 if goal["object"] in current_state["goals_in_front"]:
                     action_name = "move_forward"
@@ -463,17 +517,20 @@ def run_doom() -> dict[str, Any]:
                 else:
                     action_name = "advance_turn_right"
                     override_reason = "goal_right"
+            elif defensive_scenario and action_name == "move_forward":
+                action_name = "wait"
+                override_reason = "defensive_no_forward"
             elif action_name == "forward_attack":
                 # There is no target in view, so do not waste an attack while
                 # navigating; reserve shooting for the visible-target branch.
-                action_name = "move_forward"
-                override_reason = "no_visible_target"
+                action_name = "wait" if defensive_scenario else "move_forward"
+                override_reason = "defensive_no_forward" if defensive_scenario else "no_visible_target"
             # A turn is a one-tic pulse. Require a movement/non-turn decision
             # before allowing another turn pulse, preventing repeated model
             # choices from becoming a continuous camera spin.
             elif turn_streak and action_name in {"turn_left", "turn_right"}:
-                action_name = "move_forward"
-                override_reason = "turn_cooldown"
+                action_name = "wait" if defensive_scenario else "move_forward"
+                override_reason = "defensive_no_forward" if defensive_scenario else "turn_cooldown"
             turn_streak = turn_streak + 1 if action_name in {"turn_left", "turn_right"} else 0
             last_action = action_name
             vector = action_vector(game, action_name)

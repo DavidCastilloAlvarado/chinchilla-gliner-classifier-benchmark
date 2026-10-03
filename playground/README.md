@@ -94,12 +94,18 @@ strafing, and attack buttons even when a scenario exposes only a subset of them.
 Turn inputs are one-tic pulses followed by neutral input, so buttons are never
 held indefinitely. When living monsters are visible, the runner aims at them and
 fires only when their screen bounding box is close to the crosshair. It clears all
-currently visible living monsters before resuming forward navigation. In
-`deadly_corridor.cfg`, the visible `GreenArmor`/vest at the corridor end is the
-goal; once enemies are cleared, the runner turns toward it and advances until
-the episode completes. Weapon pickups are deliberately ignored. Dead corpses
-are filtered out, and position telemetry detects forward movement that made no
-progress. The recovery turn keeps
+currently visible living monsters before resuming forward navigation. The
+nearest living monster is prioritized using its world position, rather than
+choosing only by screen alignment. However, any visible monster already centered
+under the crosshair is fired at immediately, even if another monster is closer.
+When multiple nearest monsters are equidistant, SystemOne chooses which side to
+engage instead of the controller selecting one. In `deadly_corridor.cfg`, the visible
+`GreenArmor`/vest at the corridor end is the goal; once enemies are cleared, the
+runner turns toward it and advances until the episode completes. In defensive
+maps such as `defend_the_line.cfg`, there is no navigation goal and forward
+movement is disabled; the runner only turns and fires while defending the line.
+Weapon pickups are deliberately ignored. Dead corpses are filtered out, and
+position telemetry detects forward movement that made no progress. The recovery turn keeps
 rotating in one direction instead of alternating left/right and canceling itself
 at a wall.
 
