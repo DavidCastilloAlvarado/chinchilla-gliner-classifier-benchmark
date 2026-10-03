@@ -1,0 +1,123 @@
+# Chrome Dino SystemOne playground
+
+This folder contains an opt-in live test that opens a **headed persistent Google
+Chrome** profile, navigates to Dino, reads the current game state, asks the local
+SystemOne-compatible endpoint for one action, and then sends that action to the
+page.
+
+The loop's order is:
+
+1. Read the Dino `Runner` state from the page (`player`, nearest obstacle,
+   distance, speed, and score).
+2. POST that state to `POST /v1/systemone`.
+3. Read `answers.action.choice` from the response.
+4. Apply the response to the latest game state and wait for the distance trigger
+   before sending exactly one browser action: `Space` for `jump`, `ArrowDown` for
+   `duck`, or no key for `none`. The Runner is never paused or modified; Chrome
+   continues its normal animation while SystemOne responds. A small collision
+   guard corrects a semantically unsafe classifier choice for a clearly identified
+   cactus or airborne obstacle; the raw model choice is logged as `model_action`
+   and the executed key as `action`; `decision_latency_ms` records the live HTTP
+round-trip time.
+
+The endpoint implementation is not imported or changed. Both playgrounds load
+the shared `SYSTEMONE_URL` from the project `.env` file using `python-dotenv`:
+
+```dotenv
+SYSTEMONE_URL=http://192.168.18.200:8000/v1/systemone
+```
+
+`DINO_SYSTEMONE_URL` remains supported for backward compatibility. The Swagger
+URL is documentation; the actual value must be the POST URL ending in
+`/v1/systemone`. The model defaults to `fastino/GLiNER2.5-multi-Decide`.
+
+## Run
+
+The direct command is:
+
+```bash
+uv run dino
+```
+
+It loads `SYSTEMONE_URL` from `.env`, opens the headed persistent Chrome
+profile, and runs the live workflow. For pytest-based execution, use:
+
+```bash
+RUN_DINO_TEST=1 uv run pytest playground/test_dino.py -s
+```
+
+The equivalent Python command is:
+
+```bash
+uv run python playground/test_dino.py
+```
+
+Playwright uses a persistent profile at `playground/.chrome-profile/` and opens
+the requested Dino page. The default is `https://chromedino.com/`, because the
+installed Chrome build does not expose `chrome://dino/`. Set `DINO_URL=chrome://dino/`
+only when running against a Chrome build that supports that internal page. No
+second URL is tried after the requested page fails. The browser is headed for the
+duration of the run and closes when the bounded test finishes.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `RUN_DINO_TEST` | unset | Must be `1` for the live test; prevents accidental browser runs. |
+| `SYSTEMONE_URL` | project `.env` | Shared SystemOne POST URL; required for live playgrounds. |
+| `DINO_SYSTEMONE_URL` | fallback environment name | Backward-compatible Dino endpoint variable. |
+| `DINO_MODEL` | `fastino/GLiNER2.5-multi-Decide` | Loaded model identifier. |
+| `DINO_URL` | `https://chromedino.com/` | Requested Dino page; no second URL is tried. |
+| `DINO_BROWSER_CHANNEL` | `chrome` | Playwright browser channel. |
+| `DINO_USER_DATA_DIR` | `playground/.chrome-profile` | Persistent Chrome user-data directory. |
+| `DINO_DURATION_SECONDS` | `10` | Maximum play time per run. |
+| `DINO_POLL_INTERVAL_SECONDS` | `0.15` | Delay between state/decision cycles. |
+| `DINO_DECISION_DISTANCE_PX` | `250` | Ask the model once when an obstacle enters this observation window. |
+| `DINO_JUMP_TRIGGER_DISTANCE_PX` | `120` | Press `Space` when a ground obstacle reaches this distance. |
+| `DINO_DUCK_TRIGGER_DISTANCE_PX` | `150` | Wait until an airborne obstacle is this close before holding `ArrowDown`. |
+| `DINO_DUCK_DURATION_MS` | `450` | How long `ArrowDown` is held. |
+
+## Doom 1 with ViZDoom
+
+The Doom playground uses ViZDoom's native `DoomGame` API and the same SystemOne
+endpoint. It sends a compact visual observation (ASCII screen downsample,
+visible labels, game variables, health/ammo when available) and applies one
+choice after the response:
+
+```bash
+uv run doom
+```
+
+The default scenario is ViZDoom's `deadly_corridor.cfg`, which provides
+multiple enemies together with navigable space. Use `defend_the_line.cfg` for a
+stationary scene with several enemies visible simultaneously, or `basic.cfg`
+for a single-target smoke test. The runner explicitly enables
+forward/backward movement, turning, strafing, and attack buttons because the
+stock scenario exposes only a subset of those controls. Turn choices are sent as
+one-tic pulses followed by explicit neutral input for the rest of the decision
+interval, so a turn button is never held indefinitely. A turn must be followed
+by a movement/non-turn decision before another turn is executed; repeated turn
+choices are logged as `model_action` but safely executed as `move_forward`.
+Health, kill count, position, angle, and ammo telemetry are also included in
+each request. The labels buffer is enabled; when a monster label is off-center, the runner
+turns toward its screen bounding-box center. It executes a short `ATTACK` pulse
+only once the monster is within the crosshair tolerance. Position telemetry also
+detects forward movement that made no progress and requests a turn away from the
+wall. Useful settings are:
+
+```bash
+DOOM_SCENARIO=deadly_corridor.cfg DOOM_MAX_SECONDS=30 DOOM_FRAME_SKIP=4 uv run doom
+```
+
+`DOOM_HEADLESS=1` hides the ViZDoom window. `DOOM_SYSTEMONE_TIMEOUT_SECONDS`
+controls the decision request timeout, `DOOM_AIM_TOLERANCE` controls how close a
+monster must be to the crosshair before firing, and `DOOM_MODEL` overrides the
+model.
+By default, a dead or completed episode automatically restarts until
+`DOOM_MAX_SECONDS` expires. Set `DOOM_EPISODES=1` to stop after the first episode.
+The game is advanced with `make_action` only after the SystemOne response, so the
+request/response/action order is explicit and real-time.
+
+The project dev dependencies include Playwright and ViZDoom. The Dino workflow
+uses the installed Google Chrome channel rather than Playwright's bundled browser,
+so a separate `playwright install` is normally not needed.

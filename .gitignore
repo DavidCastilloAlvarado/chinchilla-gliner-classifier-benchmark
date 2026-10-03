@@ -15,3 +15,9 @@ wheels/
 # Local model weights and generated data
 temp/
 data/
+
+# Persistent browser state created by the Dino playground
+playground/.chrome-profile/
+
+# ViZDoom generates this local engine configuration at runtime
+_vizdoom.ini
