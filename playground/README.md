@@ -114,9 +114,11 @@ distance are categorical. Dead enemies and weapons are excluded; raw coordinates
 labels, and screen ASCII are not sent to the model.
 
 The movement summary uses discrete states: `blocked_by_enemy`,
-`blocked_by_defense`, or `allowed`, plus the goal's `left`/`right`/`on_spot`
-direction. Movement behavior is unchanged: translation is blocked while enemies
-are visible and at all times in stationary defense maps.
+`blocked_by_defense`, `goal_visible`, or `search_forward`, plus the goal's
+`left`/`right`/`on_spot` direction. In the corridor, when no enemies or goal are
+visible, the controller moves forward until the goal enters view. Once visible, it
+turns toward a left/right goal or advances when it is on_spot. Enemies still block
+translation, and stationary defense maps never move.
 
 Every SystemOne choice is one key: `move_forward`, `move_backward`, `move_left`,
 `move_right`, `turn_left`, `turn_right`, `attack`, or `wait`. `combat_status` is

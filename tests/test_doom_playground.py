@@ -10,6 +10,7 @@ from playground.doom import (
     _combat_status,
     apply_combat_safety,
     apply_movement_safety,
+    apply_navigation_policy,
     doom_state,
     _distance_tag,
     _position_tag,
@@ -107,6 +108,27 @@ def test_combat_policy_shoots_when_ready_and_aims_toward_available_side():
 def test_partially_visible_living_enemy_still_counts_as_visible():
     enemies = _visible_monsters([_label("Zombieman", "Monster", width=1)])
     assert len(enemies) == 1
+
+
+def test_navigation_finds_and_follows_a_visible_goal():
+    assert apply_navigation_policy(
+        "turn_right", mode="navigate", enemy_count=0, goal_direction="not_visible"
+    ) == ("move_forward", "navigate_toward_goal")
+    assert apply_navigation_policy(
+        "move_forward", mode="navigate", enemy_count=0, goal_direction="left"
+    ) == ("turn_left", "navigate_toward_goal")
+    assert apply_navigation_policy(
+        "turn_left", mode="navigate", enemy_count=0, goal_direction="right"
+    ) == ("turn_right", "navigate_toward_goal")
+    assert apply_navigation_policy(
+        "wait", mode="navigate", enemy_count=0, goal_direction="on_spot"
+    ) == ("move_forward", "navigate_toward_goal")
+    assert apply_navigation_policy(
+        "turn_right", mode="navigate", enemy_count=1, goal_direction="left"
+    ) == ("turn_right", None)
+    assert apply_navigation_policy(
+        "turn_right", mode="stationary_defense", enemy_count=0, goal_direction="left"
+    ) == ("turn_right", None)
 
 
 def test_defensive_scenarios_block_all_translation():

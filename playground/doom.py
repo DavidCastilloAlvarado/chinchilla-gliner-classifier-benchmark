@@ -41,7 +41,7 @@ TRANSLATION_ACTIONS = frozenset(
 )
 
 ACTION_CRITERIA = {
-    "move_forward": "Press only MOVE_FORWARD to walk forward when no living enemy is visible and navigation is appropriate.",
+    "move_forward": "Press only MOVE_FORWARD to continue down the corridor when no enemy or goal is visible, or approach a goal tagged on_spot.",
     "move_backward": "Press only MOVE_BACKWARD to retreat when no living enemy is visible.",
     "move_left": "Press only MOVE_LEFT to strafe left when no living enemy is visible.",
     "move_right": "Press only MOVE_RIGHT to strafe right when no living enemy is visible.",
@@ -303,6 +303,30 @@ def apply_movement_safety(
     return action_name, None
 
 
+def apply_navigation_policy(
+    action_name: str,
+    *,
+    mode: str,
+    enemy_count: int,
+    goal_direction: str,
+) -> tuple[str, str | None]:
+    """Keep corridor navigation moving when the goal is not yet visible."""
+
+    if mode != "navigate" or enemy_count:
+        return action_name, None
+    if goal_direction == "left":
+        desired_action = "turn_left"
+    elif goal_direction == "right":
+        desired_action = "turn_right"
+    else:
+        # No visible goal means keep walking down the known corridor until it
+        # enters view; on_spot means the goal is aligned for forward movement.
+        desired_action = "move_forward"
+    if action_name != desired_action:
+        return desired_action, "navigate_toward_goal"
+    return action_name, None
+
+
 def apply_combat_safety(
     action_name: str,
     combat_status: str,
@@ -474,8 +498,10 @@ def run_doom() -> dict[str, Any]:
                 movement_status = "blocked_by_defense"
             elif current_state["enemies"]:
                 movement_status = "blocked_by_enemy"
+            elif goal:
+                movement_status = "goal_visible"
             else:
-                movement_status = "allowed"
+                movement_status = "search_forward"
             current_state["movement"] = {
                 "status": movement_status,
                 "goal_direction": goal["position"] if goal else "not_visible",
@@ -496,10 +522,11 @@ def run_doom() -> dict[str, Any]:
                     "shooting again. An enemy tagged on_spot is ready_to_shoot; "
                     "distance does not affect readiness. left means turn_left; right "
                     "means turn_right. When movement.status is blocked_by_enemy or "
-                    "blocked_by_defense, do not move. When movement.status is allowed "
-                    "and there are no enemies, navigate toward movement.goal_direction; "
-                    "move_forward when it is on_spot. If mode is stationary_defense, "
-                    "never move. Ignore weapons. Return exactly one criterion."
+                    "blocked_by_defense, do not move. With no enemies and mode navigate, "
+                    "move_forward when movement.status is search_forward or the goal is "
+                    "on_spot; turn toward a visible goal tagged left/right. If mode is "
+                    "stationary_defense, never move. Ignore weapons. Return exactly "
+                    "one criterion."
                 ),
                 criteria=ACTION_CRITERIA,
             )
@@ -521,7 +548,13 @@ def run_doom() -> dict[str, Any]:
                 visible_enemy_count=len(current_state["enemies"]),
                 defensive_scenario=defensive_scenario,
             )
-            override_reason = movement_override or override_reason
+            action_name, navigation_override = apply_navigation_policy(
+                action_name,
+                mode=current_state["mode"],
+                enemy_count=len(current_state["enemies"]),
+                goal_direction=current_state["movement"]["goal_direction"],
+            )
+            override_reason = navigation_override or movement_override or override_reason
 
             last_action = action_name
             vector = action_vector(game, action_name)
