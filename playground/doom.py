@@ -29,6 +29,9 @@ ACTION_BUTTONS = {
     # Turning is a rotation pulse only. Movement is a separate action.
     "turn_left": "TURN_LEFT",
     "turn_right": "TURN_RIGHT",
+    # Internal navigation corrections: rotate and advance for one short tic.
+    "advance_turn_left": ("TURN_LEFT", "MOVE_FORWARD"),
+    "advance_turn_right": ("TURN_RIGHT", "MOVE_FORWARD"),
     "strafe_left": "MOVE_LEFT",
     "strafe_right": "MOVE_RIGHT",
     "attack": "ATTACK",
@@ -143,14 +146,21 @@ def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, An
     for label in _iter_labels(labels):
         name = str(getattr(label, "object_name", "unknown"))
         category = str(getattr(label, "object_category", ""))
-        is_monster = category.lower() == "monster" or any(
-            hint in name.lower() for hint in MONSTER_NAME_HINTS
+        name_lower = name.lower()
+        category_lower = category.lower()
+        # Dead corpses and gore can contain names such as DeadZombieman, but
+        # they are not valid targets and must never steal the aim target.
+        if name_lower.startswith("dead") or category_lower in {"gore", "gibs", "blood"}:
+            continue
+        is_monster = category_lower == "monster" or any(
+            hint in name_lower for hint in MONSTER_NAME_HINTS
         )
         if not is_monster:
             continue
         left = float(getattr(label, "x", 0.0))
         width = float(getattr(label, "width", 0.0))
-        if width <= 0:
+        # Ignore one-pixel edge remnants; use a real visible target instead.
+        if width < 4:
             continue
         center_x = left + width / 2.0
         monsters.append(
@@ -222,7 +232,7 @@ def _active_tics(action_name: str, frame_skip: int) -> int:
     """Return how long a discrete button pulse is held before explicit release."""
 
     frame_skip = max(1, frame_skip)
-    if action_name in {"turn_left", "turn_right"}:
+    if action_name in {"turn_left", "turn_right", "advance_turn_left", "advance_turn_right"}:
         return min(frame_skip, max(1, _env_int("DOOM_TURN_TICS", 1)))
     if action_name == "attack":
         # The weapon needs several tics to complete its firing state; a one-tic
@@ -333,6 +343,8 @@ def run_doom() -> dict[str, Any]:
                 "strafe_left",
                 "strafe_right",
                 "forward_attack",
+                "advance_turn_left",
+                "advance_turn_right",
             }
             if position is not None and previous_position is not None and last_action in movement_actions:
                 distance = sum((a - b) ** 2 for a, b in zip(position, previous_position)) ** 0.5
@@ -369,6 +381,8 @@ def run_doom() -> dict[str, Any]:
             if visible_monsters:
                 target = visible_monsters[0]
                 if target["object"] in current_state["monsters_in_front"]:
+                    # Clear every currently visible threat before resuming
+                    # navigation. Do not walk into a centered enemy.
                     action_name = "attack"
                     override_reason = "monster_centered"
                 elif target["horizontal_error_px"] < 0:
@@ -380,8 +394,13 @@ def run_doom() -> dict[str, Any]:
             # If position telemetry says a movement action made no progress,
             # turn out of the obstacle instead of repeatedly pressing forward.
             elif stuck_steps and action_name in movement_actions:
-                action_name = "turn_left" if stuck_steps % 2 else "turn_right"
+                action_name = "advance_turn_left" if stuck_steps % 2 else "advance_turn_right"
                 override_reason = "movement_stuck"
+            elif action_name == "forward_attack":
+                # There is no target in view, so do not waste an attack while
+                # navigating; reserve shooting for the visible-target branch.
+                action_name = "move_forward"
+                override_reason = "no_visible_target"
             # A turn is a one-tic pulse. Require a movement/non-turn decision
             # before allowing another turn pulse, preventing repeated model
             # choices from becoming a continuous camera spin.

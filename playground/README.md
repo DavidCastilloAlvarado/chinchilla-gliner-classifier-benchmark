@@ -80,43 +80,110 @@ duration of the run and closes when the bounded test finishes.
 ## Doom 1 with ViZDoom
 
 The Doom playground uses ViZDoom's native `DoomGame` API and the same SystemOne
-endpoint. It sends a compact visual observation (ASCII screen downsample,
-visible labels, game variables, health/ammo when available) and applies one
-choice after the response:
+endpoint. Each decision sends a compact visual observation (downsampled ASCII
+screen, visible labels, position, angle, health, armor, kill count, and ammo) and
+executes one real-time action after the response:
 
 ```bash
 uv run doom
 ```
 
-The default scenario is ViZDoom's `deadly_corridor.cfg`, which provides
-multiple enemies together with navigable space. Use `defend_the_line.cfg` for a
-stationary scene with several enemies visible simultaneously, or `basic.cfg`
-for a single-target smoke test. The runner explicitly enables
-forward/backward movement, turning, strafing, and attack buttons because the
-stock scenario exposes only a subset of those controls. Turn choices are sent as
-one-tic pulses followed by explicit neutral input for the rest of the decision
-interval, so a turn button is never held indefinitely. A turn must be followed
-by a movement/non-turn decision before another turn is executed; repeated turn
-choices are logged as `model_action` but safely executed as `move_forward`.
-Health, kill count, position, angle, and ammo telemetry are also included in
-each request. The labels buffer is enabled; when a monster label is off-center, the runner
-turns toward its screen bounding-box center. It executes a short `ATTACK` pulse
-only once the monster is within the crosshair tolerance. Position telemetry also
-detects forward movement that made no progress and requests a turn away from the
-wall. Useful settings are:
+The default scenario is `deadly_corridor.cfg`, which provides multiple enemies
+and navigable space. The runner enables forward/backward movement, turning,
+strafing, and attack buttons even when a scenario exposes only a subset of them.
+Turn inputs are one-tic pulses followed by neutral input, so buttons are never
+held indefinitely. When living monsters are visible, the runner aims at them and
+fires only when their screen bounding box is close to the crosshair. It clears all
+currently visible living monsters before resuming forward navigation. Dead corpses
+are filtered out, and position telemetry detects forward movement that made no
+progress so the player can turn away from a wall.
+
+### ViZDoom scenarios/maps
+
+`DOOM_SCENARIO` accepts a scenario filename or a path to a custom `.cfg` file.
+The filenames below are the scenarios shipped in the installed ViZDoom package.
+Some scenarios reference an external Doom/Doom II/Freedoom IWAD and will require
+that WAD to be installed separately.
+
+| Scenario | Use |
+|---|---|
+| `deadly_corridor.cfg` | Multiple enemies in a navigable corridor; default. |
+| `defend_the_line.cfg` | Several enemies visible across a line; combat-focused. |
+| `defend_the_center.cfg` | Defend a central position against spawning enemies. |
+| `basic.cfg` | Basic single-target smoke test. |
+| `basic_audio.cfg` | Basic scenario with audio state. |
+| `basic_notifications.cfg` | Basic scenario with notification state. |
+| `simpler_basic.cfg` | Reduced/simplified basic scenario. |
+| `rocket_basic.cfg` | Basic scenario using rocket combat. |
+| `deathmatch.cfg` | Single-player deathmatch scenario. |
+| `multi.cfg` | Multi-player deathmatch scenario. |
+| `multi_duel.cfg` | Multi-player duel scenario. |
+| `health_gathering.cfg` | Collect health items while navigating. |
+| `health_gathering_supreme.cfg` | Extended health-gathering scenario. |
+| `take_cover.cfg` | Find and use cover under attack. |
+| `my_way_home.cfg` | Navigate toward a goal/home location. |
+| `learning.cfg` | Small learning-oriented environment. |
+| `predict_position.cfg` | Predict and track moving positions. |
+| `cig.cfg` | CIG benchmark scenario. |
+| `oblige.cfg` | Oblige-generated level scenario; may need its WAD. |
+| `doom.cfg` | Full Doom scenario; requires `doom.wad` if not installed. |
+| `doom2.cfg` | Full Doom II scenario; requires `doom2.wad` if not installed. |
+| `freedoom1.cfg` | Freedoom 1 scenario; requires the Freedoom IWAD if not bundled. |
+| `freedoom2.cfg` | Freedoom 2 scenario; requires the Freedoom IWAD if not bundled. |
+
+Examples:
 
 ```bash
-DOOM_SCENARIO=deadly_corridor.cfg DOOM_MAX_SECONDS=30 DOOM_FRAME_SKIP=4 uv run doom
+# Default: several enemies plus a navigable corridor
+uv run doom
+
+# Several enemies visible simultaneously in a stationary combat layout
+DOOM_SCENARIO=defend_the_line.cfg uv run doom
+
+# Original one-target smoke test
+DOOM_SCENARIO=basic.cfg DOOM_MAX_SECONDS=10 uv run doom
+
+# Use a custom scenario config
+DOOM_SCENARIO=/path/to/my_scenario.cfg uv run doom
 ```
 
-`DOOM_HEADLESS=1` hides the ViZDoom window. `DOOM_SYSTEMONE_TIMEOUT_SECONDS`
-controls the decision request timeout, `DOOM_AIM_TOLERANCE` controls how close a
-monster must be to the crosshair before firing, and `DOOM_MODEL` overrides the
-model.
+### Doom environment variables
+
+All values can be placed in the project `.env` file or supplied inline in the
+shell. `SYSTEMONE_URL` is preferred; the two legacy names are fallback aliases.
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `SYSTEMONE_URL` | required | Shared SystemOne `POST` URL. |
+| `DOOM_SYSTEMONE_URL` | fallback | Doom-specific SystemOne URL alias. |
+| `DINO_SYSTEMONE_URL` | fallback | Legacy endpoint alias shared with Dino. |
+| `DOOM_SCENARIO` | `deadly_corridor.cfg` | ViZDoom scenario/config filename or path. |
+| `DOOM_HEADLESS` | `0` | Set to `1` to hide the ViZDoom window. |
+| `DOOM_MAX_SECONDS` | `30` | Maximum wall-clock duration of the run. |
+| `DOOM_EPISODES` | `0` | Maximum episodes; `0` means restart until the time limit. |
+| `DOOM_FRAME_SKIP` | `4` | Tics allocated to each decision interval. |
+| `DOOM_TURN_TICS` | `1` | Tics for a turn pulse. |
+| `DOOM_ATTACK_TICS` | `4` | Tics for an attack; enough for the weapon to fire. |
+| `DOOM_AIM_TOLERANCE` | `0.02` | Fraction of screen width allowed between target center and crosshair. |
+| `DOOM_SYSTEMONE_TIMEOUT_SECONDS` | `5` | HTTP timeout for each SystemOne decision. |
+| `DOOM_MODEL` | `DINO_MODEL` or `fastino/GLiNER2.5-multi-Decide` | SystemOne model identifier. |
+
+For example:
+
+```bash
+DOOM_SCENARIO=deadly_corridor.cfg \\
+DOOM_MAX_SECONDS=300 \\
+DOOM_FRAME_SKIP=4 \\
+DOOM_TURN_TICS=1 \\
+DOOM_ATTACK_TICS=4 \\
+DOOM_AIM_TOLERANCE=0.02 \\
+uv run doom
+```
+
 By default, a dead or completed episode automatically restarts until
 `DOOM_MAX_SECONDS` expires. Set `DOOM_EPISODES=1` to stop after the first episode.
-The game is advanced with `make_action` only after the SystemOne response, so the
-request/response/action order is explicit and real-time.
+The game advances with `make_action` only after the SystemOne response, so the
+request/response/action order remains explicit and real-time.
 
 The project dev dependencies include Playwright and ViZDoom. The Dino workflow
 uses the installed Google Chrome channel rather than Playwright's bundled browser,
