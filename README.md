@@ -78,6 +78,12 @@ uv run server-gpu
 See [`app/README.md`](app/README.md) for the endpoint contracts, app JSON
 format, batching design, environment variables, and Kubernetes readiness guidance.
 
+### Swagger UI
+
+The interactive API documentation is available at `/api/doc`:
+
+![Swagger UI](./swagger.png)
+
 ### Docker and Docker Compose
 
 The Docker image installs dependencies during the image build but does not copy
