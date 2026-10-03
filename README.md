@@ -61,9 +61,10 @@ environment variables are used directly. The real `.env` is ignored by Git.
 
 The independent `app/` package serves the local GLiNER2 model with a modular
 FastAPI architecture and a small dynamic micro-batcher. It supports the
-TypeSafe/System One-compatible free endpoint at `POST /v1/systemone`, stored app
-schemas for classification/extraction, legacy GLiNER2-native ad-hoc
-classification, CUDA model loading, optional `torch.compile`, and a configurable
+TypeSafe/System One-compatible free endpoint at `POST /v1/systemone`, a
+GLiNER2 entity extraction endpoint at `POST /v1/extraction`, stored app schemas
+for classification/extraction, legacy GLiNER2-native ad-hoc classification,
+CUDA model loading, optional `torch.compile`, and a configurable
 10 ms batching window.
 
 ```bash
@@ -74,6 +75,40 @@ MODEL_NAME=decide GPU_MODE=cuda COMPILE_MODEL=true \
 
 See [`app/README.md`](app/README.md) for the endpoint contracts, app JSON
 format, batching design, environment variables, and Kubernetes readiness guidance.
+
+### Docker and Docker Compose
+
+The Docker image installs dependencies during the image build but does not copy
+application source or model weights into the image. Compose mounts the checkout at
+`/workspace` and mounts the local `temp/` model directory read-only.
+
+CPU mode is the default:
+
+```bash
+make build
+make run
+# or build and run in one command
+make runbuild
+```
+
+Use the CUDA image and GPU profile with:
+
+```bash
+make build PROFILE=cuda
+make run PROFILE=cuda
+# or
+make runbuild PROFILE=cuda
+```
+
+The Compose services define their native `healthcheck` against
+`/health/live`, with a 300-second startup window for model loading, compilation,
+and warmup. The CUDA profile uses the NVIDIA Container Toolkit and `gpus: all`.
+Both profiles run Uvicorn with developer reload enabled and watch the mounted
+`/workspace/app` directory, so Python source changes automatically restart the
+server and repeat model warmup. Dependency changes still require an image rebuild.
+The CPU and CUDA variants are separate Compose profiles, so only the selected
+service starts. See [`docker-compose.yml`](docker-compose.yml), [`Dockerfile`](Dockerfile), and
+[`Makefile`](Makefile) for the complete configuration.
 
 The Locust stress test and Prometheus verification instructions are in
 [`stress/README.md`](stress/README.md):

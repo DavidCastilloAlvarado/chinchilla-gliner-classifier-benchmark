@@ -6,7 +6,7 @@ Run from the project root with:
 
 from fastapi import FastAPI
 
-from app.api.routes import router
+from app.api.router import router
 from app.core.lifespan import lifespan
 
 app = FastAPI(

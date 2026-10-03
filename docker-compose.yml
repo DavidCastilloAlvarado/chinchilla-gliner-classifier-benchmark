@@ -1,0 +1,63 @@
+services:
+  classifier-cpu:
+    profiles: ["cpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cpu
+    image: classifier:cpu
+    working_dir: /workspace
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      MODEL_NAME: ${MODEL_NAME:-decide}
+      MODEL_DIR: ${MODEL_DIR:-}
+      GPU_MODE: cpu
+      COMPILE_MODEL: ${COMPILE_MODEL:-false}
+      BATCH_WINDOW_MS: ${BATCH_WINDOW_MS:-10}
+      N_CONCURRENCY: ${N_CONCURRENCY:-8}
+      MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-256}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
+      APPS_DIR: ${APPS_DIR:-app/apps}
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 300s
+      retries: 3
+    volumes:
+      - .:/workspace
+      - ./temp:/workspace/temp:ro
+
+  classifier-cuda:
+    profiles: ["cuda"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: cuda
+    image: classifier:cuda
+    working_dir: /workspace
+    gpus: all
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    environment:
+      MODEL_NAME: ${MODEL_NAME:-decide}
+      MODEL_DIR: ${MODEL_DIR:-}
+      GPU_MODE: cuda
+      COMPILE_MODEL: ${COMPILE_MODEL:-true}
+      BATCH_WINDOW_MS: ${BATCH_WINDOW_MS:-10}
+      N_CONCURRENCY: ${N_CONCURRENCY:-8}
+      MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-256}
+      REQUEST_TIMEOUT_SECONDS: ${REQUEST_TIMEOUT_SECONDS:-30}
+      APPS_DIR: ${APPS_DIR:-app/apps}
+      UV_PROJECT_ENVIRONMENT: /opt/venv
+    healthcheck:
+      test: ["CMD", "python3.12", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 300s
+      retries: 3
+    volumes:
+      - .:/workspace
+      - ./temp:/workspace/temp:ro

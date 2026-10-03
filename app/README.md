@@ -46,6 +46,31 @@ batcher and marking readiness. When `COMPILE_MODEL=true`, this warmup also
 triggers model compilation/tracing. The readiness endpoint is not available as
 ready until model loading and warmup have finished.
 
+## Docker Compose
+
+The project provides CPU and CUDA Compose profiles. The image only installs the
+locked dependencies; the local checkout is mounted at `/workspace` and local
+model weights in `temp/` are mounted read-only.
+
+```bash
+# CPU
+make runbuild
+
+# NVIDIA GPU
+make runbuild PROFILE=cuda
+```
+
+Use `make build` and `make run` separately when the image should be built or
+started independently. The CUDA profile requires the NVIDIA Container Toolkit
+and uses `gpus: all`. Each service uses a native Compose healthcheck against
+`/health/live`, allowing 300 seconds for model loading, compilation, and warmup.
+The container runs Uvicorn in developer reload mode from
+the mounted project with `uv run --no-sync uvicorn ... --reload`, watching
+`/workspace/app`.
+Python source changes restart the server automatically, including the model
+warmup. It does not reinstall dependencies or download models at startup; rebuild
+the image only after changing `pyproject.toml` or `uv.lock`.
+
 ## Tests
 
 Run the FastAPI unit and schema tests through the project test command:
@@ -157,6 +182,40 @@ normal HTTP 422 validation response. The existing `/api/v1/classify` endpoint is
 retained as a legacy GLiNER2-native endpoint; new free-form clients should use
 `/v1/systemone`.
 
+### Ad-hoc entity extraction
+
+Use `POST /v1/extraction` when the application needs actual entity text and
+character offsets rather than a bounded System One decision. This example uses
+the currently loaded `fastino/GLiNER2.5-multi-Decide` checkpoint. Its PII
+candidates can have lower confidence, so the example sets `threshold` to `0.1`
+for review; use a higher threshold to reduce false positives.
+
+```bash
+curl -s http://localhost:8000/v1/extraction \
+  -H 'content-type: application/json' \
+  -d '{
+    "model": "fastino/GLiNER2.5-multi-Decide",
+    "state": {
+      "message": "Mi nombre es Ana López, mi correo es ana.lopez@example.com y mi teléfono es +51 999 123 456.",
+      "language": "es"
+    },
+    "entities": {
+      "person_name": "A person full name",
+      "email": "An email address",
+      "phone": "A telephone number",
+      "financial_identifier": "A bank account, card, or payment identifier"
+    },
+    "threshold": 0.1,
+    "include_confidence": true,
+    "include_spans": true
+  }'
+```
+
+The response groups extracted objects by category. Each object may include
+`text`, `confidence`, `start`, and `end`. The categories are open-ended, so this
+endpoint can extract PII, dates, amounts, organizations, locations, or domain-
+specific entities supported by the GLiNER2 model.
+
 ### Legacy ad-hoc classification
 
 Send candidate classes with optional descriptions:
@@ -225,10 +284,22 @@ uses `entities`, also as a list or a label-to-description object. See
 
 ```text
 app/
-├── main.py                 FastAPI application and router registration
+├── main.py                 FastAPI application shell
 ├── api/
-│   ├── routes.py           HTTP endpoints and dependency injection
-│   └── schemas.py          Pydantic request/response models
+│   ├── router.py           Registers all endpoint routers
+│   ├── common.py           Shared batching and state helpers
+│   ├── systemone/
+│   │   ├── controller.py   System One route and Swagger examples
+│   │   ├── service.py      System One dependency/service logic
+│   │   └── schema.py       System One Pydantic models
+│   ├── extractor/
+│   │   ├── controller.py   Extraction route and Swagger examples
+│   │   ├── service.py      Extraction dependency/service logic
+│   │   └── schema.py       Extraction Pydantic models
+│   └── application/
+│       ├── controller.py   Health, legacy, and stored-app routes
+│       ├── service.py      Application endpoint logic
+│       └── schema.py       Application Pydantic models
 ├── core/
 │   ├── apps.py             Validated JSON app-schema registry
 │   ├── batching.py         Async 10 ms micro-batcher

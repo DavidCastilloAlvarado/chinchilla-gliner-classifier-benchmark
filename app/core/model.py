@@ -79,6 +79,7 @@ class ModelService:
                     texts,
                     operation["entities"],
                     batch_size=len(texts),
+                    threshold=operation.get("threshold", 0.5),
                     include_confidence=operation.get("include_confidence", True),
                     include_spans=operation.get("include_spans", True),
                 )

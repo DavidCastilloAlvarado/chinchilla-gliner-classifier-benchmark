@@ -22,15 +22,43 @@ Swagger UI is the only interactive API documentation exposed by this service:
 http://localhost:8000/api/doc
 ```
 
-The `/v1/systemone` operation includes a complete banking triage request example
-and a matching response example. Use the **Try it out** button to submit the
-request against the running local server. The OpenAPI document is available at:
+The `/v1/systemone` operation includes complete request and response examples
+for banking intent classification, police incident classification, and PII
+detection/redaction decisions. The `/v1/extraction` operation includes a PII
+entity extraction example with confidence scores and character spans. Use the
+**Try it out** button to submit requests against the running local server. The OpenAPI document is available at:
 
 ```text
 http://localhost:8000/api/openapi.json
 ```
 
 ReDoc is intentionally disabled.
+
+## API package structure
+
+The API is split by endpoint responsibility. Each feature package keeps its
+controller, service dependency, and Pydantic models together:
+
+```text
+app/api/
+├── router.py
+├── systemone/
+│   ├── controller.py
+│   ├── service.py
+│   └── schema.py
+├── extractor/
+│   ├── controller.py
+│   ├── service.py
+│   └── schema.py
+└── application/
+    ├── controller.py
+    ├── service.py
+    └── schema.py
+```
+
+`router.py` is the only module that registers the feature routers with the
+FastAPI application. Controllers are thin HTTP wrappers and receive their
+feature service through `Depends`.
 
 ## Request
 
@@ -73,7 +101,76 @@ proposition and may include optional `true`/`false` descriptions. `score` criter
 are an ordered list with two to ten levels. The question IDs are preserved in the
 `answers` map.
 
-## Response
+## Extraction endpoint
+
+The compatible extraction endpoint is:
+
+```http
+POST /v1/extraction
+```
+
+This example uses the model actually loaded by the current server:
+`fastino/GLiNER2.5-multi-Decide`. The server must be configured with the same
+model named in the request. Because this checkpoint produces lower-confidence
+entity candidates for some PII categories, the example uses `threshold: 0.1` so
+those candidates remain visible for review.
+
+It uses the same top-level `model` and `state` fields, but replaces System One
+questions with an `entities` map. Each entity key is a category to extract and
+each value is an optional description that improves extraction accuracy.
+`include_confidence` and `include_spans` default to `true`.
+
+```json
+{
+  "model": "fastino/GLiNER2.5-multi-Decide",
+  "state": {
+    "message": "Mi nombre es Ana López, mi correo es ana.lopez@example.com y mi teléfono es +51 999 123 456.",
+    "language": "es"
+  },
+  "entities": {
+    "person_name": "A person's full name or named individual.",
+    "email": "An email address.",
+    "phone": "A telephone or mobile number.",
+    "financial_identifier": "A bank account, card, or payment identifier."
+  },
+  "threshold": 0.1,
+  "include_confidence": true,
+  "include_spans": true
+}
+```
+
+### Extraction response
+
+```json
+{
+  "model": "fastino/GLiNER2.5-multi-Decide",
+  "entities": {
+    "person_name": [
+      {"text": "Ana López", "confidence": 0.17, "start": 13, "end": 22}
+    ],
+    "email": [
+      {"text": "ana.lopez@example.com", "confidence": 0.66, "start": 37, "end": 58}
+    ],
+    "phone": [
+      {"text": "+51 999 123 456", "confidence": 0.24, "start": 76, "end": 91}
+    ],
+    "financial_identifier": []
+  },
+  "usage": {"input_tokens": 63, "output_tokens": 0}
+}
+```
+
+The extraction contract is based on GLiNER2 entity extraction with confidence
+scores and character offsets. It can extract arbitrary text spans for requested
+categories, unlike the bounded System One decision primitives.
+
+## PII example limitation
+
+The `pii_detection` example demonstrates System One-compatible detection and
+redaction decisions. The `pii_extraction` example in the `/v1/extraction`
+Swagger operation demonstrates returning the actual PII values and offsets.
+
+## System One response
 
 ```json
 {
