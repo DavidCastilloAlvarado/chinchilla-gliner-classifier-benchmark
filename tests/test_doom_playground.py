@@ -72,8 +72,8 @@ def test_position_and_distance_values_are_normalized_categories():
 
 def test_combat_status_requests_a_turn_after_one_shot():
     enemies = [
-        {"position": "on_spot", "shoot_status": "ready_to_shoot"},
-        {"position": "left", "shoot_status": "aim_required"},
+        {"position": "on_spot", "shoot_status": "ready_to_shoot", "distance": "near"},
+        {"position": "left", "shoot_status": "aim_required", "distance": "near"},
     ]
     assert _combat_status(enemies, must_aim_after_shot=False) == "shoot_ready"
     assert _combat_status(enemies, must_aim_after_shot=True) == "turn_after_shot"
@@ -118,12 +118,34 @@ def test_defensive_scenarios_block_all_translation():
         assert reason == "stationary_defense_map"
 
 
+def test_only_tightly_centered_enemies_are_shoot_ready_regardless_of_distance():
+    game = SimpleNamespace(
+        get_available_game_variables=lambda: ["POSITION_X", "POSITION_Y", "POSITION_Z"],
+        get_available_buttons=lambda: [],
+    )
+    state = SimpleNamespace(
+        game_variables=np.array([0, 0, 0]),
+        screen_buffer=np.zeros((3, 480, 640), dtype=np.uint8),
+        labels=[_label("DoomImp", "Monster", world_x=400, x=300, width=40)],
+    )
+
+    result = doom_state(game, state)
+
+    assert result["enemies"][0]["position"] == "on_spot"
+    assert result["enemies"][0]["distance"] == "far"
+    assert result["enemies"][0]["shoot_status"] == "ready_to_shoot"
+    assert _combat_status(result["enemies"], False) == "shoot_ready"
+    assert _position_tag(0.47 * 640, 640) == "left"
+    assert _position_tag(0.50 * 640, 640) == "on_spot"
+    assert _position_tag(0.53 * 640, 640) == "right"
+
+
 def test_doom_state_is_compact_and_uses_discrete_enemy_goal_tags():
     labels = [
-        _label("Zombieman", "Monster", world_x=100, world_y=20),
+        _label("Zombieman", "Monster", world_x=100, world_y=20, x=300),
         _label("DeadShotgunGuy", "Gore", world_x=80, world_y=10),
         _label("Shotgun", "Weapon", world_x=30, world_y=5),
-        _label("GreenArmor", "Armor", world_x=200, world_y=0),
+        _label("GreenArmor", "Armor", world_x=200, world_y=0, x=300),
     ]
     game = SimpleNamespace(
         get_available_game_variables=lambda: ["POSITION_X", "POSITION_Y", "POSITION_Z", "ANGLE", "PITCH"],

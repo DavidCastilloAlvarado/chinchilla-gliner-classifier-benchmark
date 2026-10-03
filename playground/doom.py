@@ -184,9 +184,9 @@ def _position_tag(center_x: float, screen_width: int) -> str:
     """Normalize horizontal position into left / on_spot / right."""
 
     normalized_x = center_x / max(screen_width, 1)
-    if normalized_x < 0.4:
+    if normalized_x < 0.48:
         return "left"
-    if normalized_x > 0.6:
+    if normalized_x > 0.52:
         return "right"
     return "on_spot"
 
@@ -241,13 +241,15 @@ def doom_state(game: Any, state: Any, episode: int | None = None) -> dict[str, A
             (monster["world_x"] - player_x) ** 2
             + (monster["world_y"] - player_y) ** 2
         ) ** 0.5
+        distance_tag = _distance_tag(distance)
+        shoot_status = "ready_to_shoot" if position == "on_spot" else "aim_required"
         enemies.append(
             {
                 "id": f"enemy_{index}",
                 "type": monster["object"],
                 "position": position,
-                "shoot_status": "ready_to_shoot" if position == "on_spot" else "aim_required",
-                "distance": _distance_tag(distance),
+                "shoot_status": shoot_status,
+                "distance": distance_tag,
             }
         )
 
@@ -292,7 +294,7 @@ def apply_movement_safety(
     visible_enemy_count: int,
     defensive_scenario: bool,
 ) -> tuple[str, str | None]:
-    """Block translation in combat and on stationary defense maps."""
+    """Block translation while enemies are visible or in defense scenarios."""
 
     if action_name in TRANSLATION_ACTIONS and visible_enemy_count:
         return "wait", "no_movement_while_enemies_visible"
@@ -313,7 +315,6 @@ def apply_combat_safety(
         if action_name != "attack":
             return "attack", "shoot_ready_priority"
         return action_name, None
-
     sides = [enemy["position"] for enemy in enemies if enemy["position"] in {"left", "right"}]
     if not sides:
         return ("wait", f"attack_blocked_{combat_status}") if action_name == "attack" else (action_name, None)
@@ -459,15 +460,7 @@ def run_doom() -> dict[str, Any]:
             elif last_action not in TRANSLATION_ACTIONS:
                 stuck_steps = 0
             previous_position = position
-            enemy_visible = bool(current_state["enemies"])
             goal = current_state["goal"][0] if current_state["goal"] else None
-            if enemy_visible:
-                movement_status = "blocked_by_enemy"
-            elif defensive_scenario:
-                movement_status = "blocked_by_defense"
-            else:
-                movement_status = "allowed"
-            current_state["mode"] = "stationary_defense" if defensive_scenario else "navigate"
             off_spot_enemies = [
                 enemy for enemy in current_state["enemies"]
                 if enemy["position"] != "on_spot"
@@ -476,6 +469,13 @@ def run_doom() -> dict[str, Any]:
                 must_aim_after_shot = False
             combat_status = _combat_status(current_state["enemies"], must_aim_after_shot)
             current_state["combat_status"] = combat_status
+            current_state["mode"] = "stationary_defense" if defensive_scenario else "navigate"
+            if defensive_scenario:
+                movement_status = "blocked_by_defense"
+            elif current_state["enemies"]:
+                movement_status = "blocked_by_enemy"
+            else:
+                movement_status = "allowed"
             current_state["movement"] = {
                 "status": movement_status,
                 "goal_direction": goal["position"] if goal else "not_visible",
@@ -492,16 +492,14 @@ def run_doom() -> dict[str, Any]:
                     "HARD SHOOTING RULE: when combat_status is shoot_ready, attack "
                     "now. In every other combat_status, do not attack. If status is "
                     "aim_required, turn toward an enemy tagged left or right. If it is "
-                    "turn_after_shot, do not attack again yet; take a turn decision "
-                    "toward another off-center enemy first. An enemy tagged on_spot "
-                    "is ready_to_shoot. left means turn_left; right means turn_right. "
-                    "Prioritize near enemies, but do not over-rank small distance "
-                    "differences. When movement.status is blocked_by_enemy or "
-                    "blocked_by_defense, never choose move_forward, move_backward, "
-                    "move_left, or move_right. When movement.status is allowed and "
-                    "there are no enemies, turn toward movement.goal_direction; move "
-                    "forward when it is on_spot. If mode is stationary_defense, never "
-                    "move. Ignore weapons. Return exactly one criterion."
+                    "turn_after_shot, turn toward another off-center enemy before "
+                    "shooting again. An enemy tagged on_spot is ready_to_shoot; "
+                    "distance does not affect readiness. left means turn_left; right "
+                    "means turn_right. When movement.status is blocked_by_enemy or "
+                    "blocked_by_defense, do not move. When movement.status is allowed "
+                    "and there are no enemies, navigate toward movement.goal_direction; "
+                    "move_forward when it is on_spot. If mode is stationary_defense, "
+                    "never move. Ignore weapons. Return exactly one criterion."
                 ),
                 criteria=ACTION_CRITERIA,
             )
@@ -512,18 +510,18 @@ def run_doom() -> dict[str, Any]:
             override_reason = None
             # Enforce unambiguous discrete combat states; SystemOne selects a
             # side when enemies appear on both sides and owns goal navigation.
-            action_name, override_reason = apply_movement_safety(
-                action_name,
-                visible_enemy_count=len(current_state["enemies"]),
-                defensive_scenario=defensive_scenario,
-            )
-            action_name, combat_override = apply_combat_safety(
+            action_name, override_reason = apply_combat_safety(
                 action_name,
                 current_state["combat_status"],
                 current_state["enemies"],
                 last_action,
             )
-            override_reason = combat_override or override_reason
+            action_name, movement_override = apply_movement_safety(
+                action_name,
+                visible_enemy_count=len(current_state["enemies"]),
+                defensive_scenario=defensive_scenario,
+            )
+            override_reason = movement_override or override_reason
 
             last_action = action_name
             vector = action_vector(game, action_name)

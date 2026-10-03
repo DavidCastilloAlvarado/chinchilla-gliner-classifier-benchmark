@@ -1,44 +1,52 @@
-# Banking Intent Classifier (GLiNER2)
+# GLiNER2 FastAPI Service — System One-Compatible API
 
-Zero-shot banking intent classification with GLiNER2 checkpoints (CPU-friendly),
-managed with **uv**. Three models selectable at benchmark time:
+This repository provides a FastAPI service that loads a GLiNER2 checkpoint and
+exposes its inference through typed, structured APIs. The primary integration is
+`POST /v1/systemone`, which adapts GLiNER2 inputs and outputs to the
+System One/TypeSafe-compatible request and response contract (`choice`, `noul`,
+and `score` questions). GLiNER2 performs the inference; FastAPI provides the
+HTTP wrapper, validation, batching, and response shaping.
 
-| `--model` | Checkpoint | Size / architecture | Language | Focus |
+System One compatibility refers to the API contract. This repository does not
+provide TypeSafe's Jev model or claim Jev-equivalent accuracy, calibration, or
+performance. The banking-intent data and benchmark results in this README are
+example evaluation workloads, not the purpose or identity of the service.
+
+The service supports three GLiNER2 checkpoints:
+
+| Alias | Checkpoint | Size / architecture | Language | Focus |
 |---|---|---|---|---|
-| `base` (default) | `fastino/gliner2-base-v1` | 205M, span | English | General extraction/classification |
+| `base` | `fastino/gliner2-base-v1` | 205M, span | English | General extraction/classification |
 | `multi` | `fastino/gliner2.5-multi-v1` | 287M, boundary | Multilingual | General extraction/classification |
 | `decide` | `fastino/GLiNER2.5-multi-Decide` | 287M, decision | Multilingual | Intent/routing/operational decisions |
 
-## Layout
+The server defaults to `MODEL_NAME=decide`; the standalone evaluation script
+uses `base` by default unless another model is selected.
+
+## Repository layout
 
 ```
-classifier/
-├── pyproject.toml            # uv project (gliner2[local], huggingface-hub)
-├── .env.example              # FastAPI configuration template
-├── temp/
-│   ├── gliner2-base-v1/          # base model weights (read from local disk)
-│   ├── gliner2.5-multi-v1/       # general multilingual model weights
-│   └── GLiNER2.5-multi-Decide/   # multilingual decision model weights
-├── data/
-│   ├── banking_intents.jsonl      # 1,000 English examples (10 intents × 100)
-│   ├── banking_intents_es.jsonl   # 1,000 Spanish examples (10 intents × 100)
-│   ├── predictions_*.jsonl        # predictions + confidence + per-example latency_ms
-│   └── metrics_*.json             # latency percentiles, throughput, accuracy
-├── app/                            # independent FastAPI serving proof of concept
-│   ├── main.py                     # FastAPI entrypoint
-│   ├── api/                        # routes and Pydantic request/response models
-│   ├── core/                       # lifespan, model, registry, dependencies, batching
-│   ├── apps/                       # stored classification/extraction JSON schemas
-│   └── README.md                   # server API and deployment documentation
-├── stress/
-│   ├── locustfile.py               # concurrent Locust load test
-│   └── README.md                   # batching verification and PromQL queries
-└── src/classifier/
-    ├── download_model.py        # downloads the model into temp/
-    ├── generate_examples.py     # generates the 1,000 English examples
-    ├── generate_examples_es.py  # generates the 1,000 Spanish examples
-    ├── classify.py              # loads model from temp/, classifies, measures latency
-    └── review_errors.py         # lists misclassified examples + confusion pairs
+.
+├── pyproject.toml             # uv project and service commands
+├── .env.example               # FastAPI service configuration template
+├── app/                       # primary GLiNER2 FastAPI service
+│   ├── main.py                # FastAPI entrypoint
+│   ├── api/                   # System One-compatible and GLiNER2-native routes
+│   ├── core/                  # model loading, batching, lifecycle, metrics
+│   ├── apps/                  # stored task schemas
+│   └── README.md              # API contract and deployment documentation
+├── stress/                    # service load tests and Prometheus guidance
+├── playground/                # optional integration demos and API evaluations
+│   ├── benchmark_banking77.py # bilingual System One endpoint benchmark
+│   ├── BANKING77_BENCHMARK_REPORT.md
+│   └── README.md              # playground usage and configuration
+├── src/classifier/            # optional standalone model evaluation utilities
+│   ├── download_model.py      # downloads local GLiNER2 checkpoints
+│   ├── generate_examples*.py  # creates example banking-intent datasets
+│   ├── classify.py            # offline classification benchmark and latency metrics
+│   └── review_errors.py       # offline prediction error analysis
+├── temp/                      # locally downloaded model weights (Git-ignored)
+└── data/                      # example datasets and generated benchmark artifacts (Git-ignored)
 ```
 
 ## Setup
@@ -57,15 +65,20 @@ The server loads the project-root `.env` during startup when it exists. Existing
 system environment variables take precedence; if `.env` is absent, system
 environment variables are used directly. The real `.env` is ignored by Git.
 
-## FastAPI serving proof of concept
+## FastAPI service
 
-The independent `app/` package serves the local GLiNER2 model with a modular
-FastAPI architecture and a small dynamic micro-batcher. It supports the
-TypeSafe/System One-compatible free endpoint at `POST /v1/systemone`, a
-GLiNER2 entity extraction endpoint at `POST /v1/extraction`, stored app schemas
-for classification/extraction, legacy GLiNER2-native ad-hoc classification,
-CUDA model loading, optional `torch.compile`, and a configurable
-3 ms batching window.
+The `app/` package is the primary application. It wraps a locally loaded
+GLiNER2 model with FastAPI and a bounded asynchronous micro-batcher. Its
+`POST /v1/systemone` endpoint accepts System One-compatible `state` and typed
+`questions`, and returns structured answers for `choice`, `noul`, and `score`.
+Additional routes provide GLiNER2 entity extraction, stored task schemas, and
+GLiNER2-native ad-hoc classification. The service supports CPU or CUDA model
+loading, optional `torch.compile`, and a configurable batching window.
+
+System One compatibility describes the request and response formats; GLiNER2
+remains the inference model. See [`app/README.md`](app/README.md) for endpoint
+contracts, app JSON format, batching, environment variables, deployment, and
+readiness guidance.
 
 ```bash
 # Default CPU server
@@ -74,9 +87,6 @@ uv run server
 # NVIDIA GPU server with model compilation enabled
 uv run server-gpu
 ```
-
-See [`app/README.md`](app/README.md) for the endpoint contracts, app JSON
-format, batching design, environment variables, and Kubernetes readiness guidance.
 
 ### Swagger UI
 
@@ -253,7 +263,24 @@ backpressure, micro-batching, and startup warmup. To run only unittest cases:
 uv run python -m unittest discover -s tests -p 'test_*.py'
 ```
 
-## 1. Download the models into `temp/`
+## Optional endpoint playgrounds
+
+`playground/` contains integration demos and endpoint-level tests. For example,
+`playground/benchmark_banking77.py` evaluates the configured
+`SYSTEMONE_URL` against the Banking77 English test split and a Spanish machine
+translation; its methodology and results are in
+[`playground/BANKING77_BENCHMARK_REPORT.md`](playground/BANKING77_BENCHMARK_REPORT.md).
+This is an optional benchmark workload for the System One-compatible endpoint,
+not a definition of the service's domain or purpose. See
+[`playground/README.md`](playground/README.md) for the other playgrounds.
+
+## Optional standalone model experiments
+
+The following commands call GLiNER2 directly for local model evaluation; they do
+not run through the FastAPI API wrapper. Banking intent is one example workload
+used by these scripts, not the service's product scope.
+
+### 1. Download the models into `temp/`
 
 ```bash
 uv run python src/classifier/download_model.py          # base (default)
@@ -265,7 +292,7 @@ uv run python src/classifier/download_model.py all      # all checkpoints
 Downloads via `huggingface_hub.snapshot_download` into `temp/<model-name>/`
 (subsequent runs are cached).
 
-## 2. Generate 1,000 banking intent examples
+### 2. Generate 1,000 banking intent examples
 
 ```bash
 uv run python src/classifier/generate_examples.py    # English  -> data/banking_intents.jsonl
@@ -277,7 +304,7 @@ Each writes 1,000 unique examples, 100 per intent:
 `check_balance`, `transfer_money`, `pay_bill`, `report_lost_card`, `report_fraud`,
 `apply_for_loan`, `apply_for_credit_card`, `close_account`, `open_account`, `reset_password`
 
-## 3. Classify (with latency metrics)
+### 3. Classify (with latency metrics)
 
 ```bash
 uv run python src/classifier/classify.py                                  # base on CPU (default)
@@ -319,14 +346,14 @@ can be amortized.
   total inference time, throughput (examples/s and tokens/s), model load time,
   overall + per-intent accuracy and per-intent latency
 
-## Benchmark results
+### Benchmark results
 
 All benchmark runs use 1,000 examples and measure wall-clock end-to-end latency per example.
 CPU results below were measured on the development machine; the GPU run was measured
 on an NVIDIA GeForce RTX 5060 Ti with 16 GB VRAM. Full numbers are written to
 `data/metrics_*.json`.
 
-### Model comparison
+#### Model comparison
 
 | | **ES** `base` | **ES** `multi` | **EN** `base` | **EN** `multi` |
 |---|---|---|---|---|
@@ -356,7 +383,7 @@ uv run python src/classifier/classify.py \
 It uses `fastino/GLiNER2.5-multi-Decide`, the multilingual operational-decision
 checkpoint for intent, routing, triage, and related tasks.
 
-### GPU benchmark: RTX 5060 Ti 16 GB
+#### GPU benchmark: RTX 5060 Ti 16 GB
 
 Command used:
 
@@ -402,7 +429,7 @@ GPU runtime emitted non-fatal compatibility warnings for legacy tokenizer
 metadata and an SDPA fallback to eager attention. The model loaded and completed
 successfully using the standard CUDA path.
 
-### GPU benchmark: `GLiNER2.5-multi-Decide`
+#### GPU benchmark: `GLiNER2.5-multi-Decide`
 
 Command used:
 
@@ -445,7 +472,7 @@ Per-intent accuracy for `decide`:
 `apply_for_credit_card` 0.96, `close_account` 0.96, `open_account` 1.00,
 and `reset_password` 1.00.
 
-### Decide GPU error analysis
+#### Decide GPU error analysis
 
 The Decide run produced **63/1,000 errors (6.3%)**. The most frequent confusion
 pairs were:
@@ -464,7 +491,7 @@ pairs were:
 The remaining errors are concentrated around card actions (`lost`, `credit card`,
 `close account`) and account-balance language that is interpreted as a transfer.
 
-### GPU benchmark: `decide` with `torch.compile`
+#### GPU benchmark: `decide` with `torch.compile`
 
 Command used:
 
@@ -507,7 +534,7 @@ Compilation emitted non-fatal Triton warnings about `max_autotune_gemm`, a C mac
 redefinition, and deprecated TorchScript usage. The compiled benchmark completed
 successfully.
 
-### Per-intent accuracy (no descriptions)
+#### Per-intent accuracy (no descriptions)
 
 | Intent | ES base | ES multi | EN base | EN multi |
 |---|---|---|---|---|
@@ -522,7 +549,7 @@ successfully.
 | open_account | 0.84 | 0.99 | 1.00 | 1.00 |
 | reset_password | 0.79 | 1.00 | 1.00 | 1.00 |
 
-### Effect of label descriptions (`--lang es`, `multi` model, ES dataset)
+#### Effect of label descriptions (`--lang es`, `multi` model, ES dataset)
 
 | | no descriptions | with Spanish descriptions |
 |---|---|---|
@@ -540,7 +567,7 @@ Top remaining confusions (ES, with descriptions):
 `report_lost_card → close_account` (20×, "cancelar tarjeta" vs "cerrar cuenta"),
 `transfer_money → check_balance` (13×), `pay_bill → check_balance` (9×).
 
-## Reviewing misclassifications
+### Reviewing misclassifications
 
 ```bash
 uv run python src/classifier/review_errors.py                 # ES predictions (default)
@@ -556,7 +583,7 @@ confidence) per pair. Quick one-liner alternative:
 jq -c 'select(.predicted != .intent)' data/predictions_banking_intents_es.jsonl
 ```
 
-### GPU error analysis (RTX 5060 Ti)
+#### GPU error analysis (RTX 5060 Ti)
 
 The GPU run produced **113/1,000 errors (11.3%)**, consistent with its 88.7%
 overall accuracy. The most frequent confusion pairs were:
@@ -576,7 +603,7 @@ The main improvement opportunity is separating account actions that mention an
 account or a card: balance queries are often interpreted as transfers, bill
 payments as transfers, and card cancellation/blocking as account closure.
 
-## Single prediction
+### Single prediction
 
 ```python
 from gliner2 import GLiNER2

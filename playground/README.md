@@ -97,7 +97,7 @@ raw coordinates or screen data:
   "player": {"health": "normal", "armor": "protected", "ammo": "available"},
   "enemies": [
     {"id": "enemy_1", "type": "Zombieman", "position": "left", "shoot_status": "aim_required", "distance": "near"},
-    {"id": "enemy_2", "type": "Imp", "position": "on_spot", "shoot_status": "ready_to_shoot", "distance": "medium"}
+    {"id": "enemy_2", "type": "Imp", "position": "on_spot", "shoot_status": "ready_to_shoot", "distance": "near"}
   ],
   "goal": [{"type": "GreenArmor", "position": "right", "distance": "far"}],
   "mode": "navigate",
@@ -107,25 +107,24 @@ raw coordinates or screen data:
 ```
 
 Enemy and goal positions use the same normalized screen tags: `left`,
-`on_spot`, or `right`. The center band (`0.4`–`0.6` of screen width) is
-`on_spot`; an enemy there is tagged `ready_to_shoot`. Distance is categorical:
-`near` (up to 128 world units), `medium` (up to 320), or `far`. Health, armor,
-and ammo are also categorical. Dead enemies and weapons are excluded; raw pixel
-coordinates, world coordinates, labels, and screen ASCII are not sent to the model.
+`on_spot`, or `right`. The narrowed center band (`0.48`–`0.52` of screen width)
+is `on_spot`; this tighter band is the only aiming change. Distance remains in
+the state for threat context but does not gate shooting. Health, armor, ammo, and
+distance are categorical. Dead enemies and weapons are excluded; raw coordinates,
+labels, and screen ASCII are not sent to the model.
 
-The movement summary uses discrete states too: `blocked_by_enemy`,
+The movement summary uses discrete states: `blocked_by_enemy`,
 `blocked_by_defense`, or `allowed`, plus the goal's `left`/`right`/`on_spot`
-direction. While an enemy is visible, code blocks translation; defensive maps
-block it at all times.
+direction. Movement behavior is unchanged: translation is blocked while enemies
+are visible and at all times in stationary defense maps.
 
 Every SystemOne choice is one key: `move_forward`, `move_backward`, `move_left`,
 `move_right`, `turn_left`, `turn_right`, `attack`, or `wait`. `combat_status` is
-`shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. `shoot_ready`
-executes ATTACK; otherwise, the controller blocks attacks and turns toward a side
-when all off-center enemies are on that side. If enemies are on both sides,
-SystemOne chooses which side to turn toward. After a shot, another turn is required
-before shooting again while off-center enemies remain. Weapon pickups are ignored,
-and each selected key is released before the next decision.
+`shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. A centered
+(`on_spot`) enemy is ready to shoot; off-center enemies require aiming. The
+controller still enforces a turn after a shot when off-center enemies remain.
+Weapon pickups are ignored, and each selected key is released before the next
+decision.
 
 ### ViZDoom scenarios/maps
 
