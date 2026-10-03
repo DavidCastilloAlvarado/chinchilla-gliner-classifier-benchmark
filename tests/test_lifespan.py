@@ -58,12 +58,7 @@ events: list = []
 
 def test_model_warmup_runs_before_batcher_and_readiness(monkeypatch) -> None:
     events.clear()
-    monkeypatch.setattr(lifespan_module, "load_environment", lambda: False)
-    monkeypatch.setattr(
-        lifespan_module.Settings,
-        "from_env",
-        classmethod(lambda cls: FakeSettings()),
-    )
+    monkeypatch.setattr(lifespan_module, "Settings", lambda: FakeSettings())
     monkeypatch.setattr(lifespan_module, "AppRegistry", FakeRegistry)
     monkeypatch.setattr(lifespan_module, "ModelService", FakeModel)
     monkeypatch.setattr(lifespan_module, "MicroBatcher", FakeBatcher)

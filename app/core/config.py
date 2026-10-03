@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from pathlib import Path
 
-from dotenv import load_dotenv
+from pydantic import AliasChoices, Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MODEL_REPOS = {
@@ -22,57 +21,66 @@ MODEL_DIR_NAMES = {
 ENV_FILE = PROJECT_ROOT / ".env"
 
 
-def load_environment() -> bool:
-    """Load the project .env before reading settings; existing env wins."""
-    return load_dotenv(dotenv_path=ENV_FILE, override=False)
+class Settings(BaseSettings):
+    """Validated settings loaded from process environment and project ``.env``."""
 
+    model_config = SettingsConfigDict(
+        env_file=ENV_FILE,
+        env_file_encoding="utf-8",
+        env_ignore_empty=True,
+        extra="ignore",
+        case_sensitive=False,
+        populate_by_name=True,
+    )
 
-def _env_bool(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
+    model_name: str = Field("decide", validation_alias="MODEL_NAME")
+    gpu_mode: str = Field("cpu", validation_alias="GPU_MODE")
+    compile_model: bool = Field(False, validation_alias="COMPILE_MODEL")
+    batch_window_ms: float = Field(3.0, validation_alias="BATCH_WINDOW_MS")
+    max_batch_size: int = Field(
+        8,
+        validation_alias=AliasChoices("N_CONCURRENCY", "MAX_BATCH_SIZE"),
+    )
+    max_queue_size: int = Field(256, validation_alias="MAX_QUEUE_SIZE")
+    request_timeout_seconds: float = Field(30.0, validation_alias="REQUEST_TIMEOUT_SECONDS")
+    apps_dir: Path = Field(PROJECT_ROOT / "app" / "apps", validation_alias="APPS_DIR")
+    model_dir: Path | None = Field(default=None, validation_alias="MODEL_DIR")
 
+    @field_validator("model_name")
+    @classmethod
+    def validate_model_name(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in MODEL_REPOS:
+            raise ValueError(f"MODEL_NAME must be one of {sorted(MODEL_REPOS)}, got {value!r}")
+        return value
 
-@dataclass(frozen=True)
-class Settings:
-    """Runtime configuration; all values can be overridden with environment variables."""
+    @field_validator("gpu_mode")
+    @classmethod
+    def validate_gpu_mode(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"cpu", "cuda"}:
+            raise ValueError("GPU_MODE must be 'cpu' or 'cuda'")
+        return value
 
-    model_name: str = "decide"
-    gpu_mode: str = "cpu"
-    compile_model: bool = False
-    batch_window_ms: float = 10.0
-    max_batch_size: int = 8
-    max_queue_size: int = 256
-    request_timeout_seconds: float = 30.0
-    apps_dir: Path = PROJECT_ROOT / "app" / "apps"
-    model_dir: Path | None = None
+    @field_validator("batch_window_ms")
+    @classmethod
+    def validate_batch_window(cls, value: float) -> float:
+        return max(0.0, value)
+
+    @field_validator("max_batch_size", "max_queue_size")
+    @classmethod
+    def validate_positive_int(cls, value: int) -> int:
+        return max(1, value)
+
+    @field_validator("request_timeout_seconds")
+    @classmethod
+    def validate_request_timeout(cls, value: float) -> float:
+        return max(0.1, value)
 
     @classmethod
     def from_env(cls) -> "Settings":
-        model_name = os.getenv("MODEL_NAME", "decide").strip().lower()
-        if model_name not in MODEL_REPOS:
-            raise ValueError(f"MODEL_NAME must be one of {sorted(MODEL_REPOS)}, got {model_name!r}")
-
-        gpu_mode = os.getenv("GPU_MODE", "cpu").strip().lower()
-        if gpu_mode not in {"cpu", "cuda"}:
-            raise ValueError("GPU_MODE must be 'cpu' or 'cuda'")
-
-        model_dir_value = os.getenv("MODEL_DIR")
-        model_dir = Path(model_dir_value).expanduser() if model_dir_value else None
-        apps_dir = Path(os.getenv("APPS_DIR", str(PROJECT_ROOT / "app" / "apps"))).expanduser()
-
-        return cls(
-            model_name=model_name,
-            gpu_mode=gpu_mode,
-            compile_model=_env_bool("COMPILE_MODEL", False),
-            batch_window_ms=max(0.0, float(os.getenv("BATCH_WINDOW_MS", "10"))),
-            max_batch_size=max(1, int(os.getenv("N_CONCURRENCY", "8"))),
-            max_queue_size=max(1, int(os.getenv("MAX_QUEUE_SIZE", "256"))),
-            request_timeout_seconds=max(0.1, float(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))),
-            apps_dir=apps_dir,
-            model_dir=model_dir,
-        )
+        """Compatibility constructor; ``BaseSettings`` performs the loading."""
+        return cls()
 
     @property
     def model_repo(self) -> str:
@@ -81,5 +89,5 @@ class Settings:
     @property
     def resolved_model_dir(self) -> Path:
         if self.model_dir is not None:
-            return self.model_dir
+            return self.model_dir.expanduser()
         return PROJECT_ROOT / "temp" / MODEL_DIR_NAMES[self.model_name]

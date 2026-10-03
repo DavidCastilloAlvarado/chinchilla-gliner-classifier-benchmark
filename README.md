@@ -65,7 +65,7 @@ TypeSafe/System One-compatible free endpoint at `POST /v1/systemone`, a
 GLiNER2 entity extraction endpoint at `POST /v1/extraction`, stored app schemas
 for classification/extraction, legacy GLiNER2-native ad-hoc classification,
 CUDA model loading, optional `torch.compile`, and a configurable
-10 ms batching window.
+3 ms batching window.
 
 ```bash
 # CPU by default; use GPU_MODE=cuda for NVIDIA inference
@@ -159,7 +159,7 @@ response handling; they are not the same as the Prometheus batch-duration metric
 | `MODEL_DIR` | `temp/<model>` | Override the local checkpoint directory |
 | `GPU_MODE` | `cpu` | Inference device: `cpu` or `cuda` |
 | `COMPILE_MODEL` | `false` | Run `torch.compile` during startup; warmup always runs before readiness |
-| `BATCH_WINDOW_MS` | `10` | Maximum time to collect compatible requests |
+| `BATCH_WINDOW_MS` | `3` | Maximum time to collect compatible requests |
 | `N_CONCURRENCY` | `8` | Maximum requests in one model batch |
 | `MAX_QUEUE_SIZE` | `256` | Maximum queued requests before HTTP 429 |
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Maximum wait for a result before HTTP 504 |

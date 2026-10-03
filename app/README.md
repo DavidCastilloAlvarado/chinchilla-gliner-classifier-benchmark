@@ -37,7 +37,7 @@ MODEL_NAME=decide \
 GPU_MODE=cuda \
 COMPILE_MODEL=true \
 N_CONCURRENCY=8 \
-BATCH_WINDOW_MS=10 \
+BATCH_WINDOW_MS=3 \
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -302,7 +302,7 @@ app/
 │       └── schema.py       Application Pydantic models
 ├── core/
 │   ├── apps.py             Validated JSON app-schema registry
-│   ├── batching.py         Async 10 ms micro-batcher
+│   ├── batching.py         Async 3 ms micro-batcher
 │   ├── config.py           Environment-backed settings
 │   ├── dependencies.py     Runtime dependency provider
 │   ├── lifespan.py         Startup/shutdown and readiness lifecycle
@@ -322,7 +322,7 @@ loop by running each model batch in a dedicated `asyncio.to_thread` call.
 Each request is put into a **bounded** `asyncio.Queue`. The worker:
 
 1. Takes the first request.
-2. Waits up to `BATCH_WINDOW_MS` (default: 10 ms) for more requests.
+2. Waits up to `BATCH_WINDOW_MS` (default: 3 ms) for more requests.
 3. Groups requests with the same operation/schema.
 4. Processes each group in chunks of at most `N_CONCURRENCY` (default: 8).
 5. Resolves each request's future with its corresponding result.
@@ -347,7 +347,7 @@ schemas match. Stored app requests naturally batch well when they use the same
 This is dynamic batching rather than LLM continuous batching. GLiNER2 is a
 stateless encoder/classifier: the complete input batch can be executed in one
 forward pass, with no token-by-token decode loop or KV-cache scheduler. The
-10 ms window is an intentional latency/throughput tradeoff. `meta.batch_size`
+3 ms window is an intentional latency/throughput tradeoff. `meta.batch_size`
 shows whether a request actually shared a batch.
 
 ### Relevant serving guidance
@@ -370,7 +370,7 @@ shows whether a request actually shared a batch.
 | `MODEL_DIR` | `temp/<model>` | Override local model directory |
 | `GPU_MODE` | `cpu` | `cpu` or `cuda` |
 | `COMPILE_MODEL` | `false` | Compile during startup; the model is always warmed up before readiness |
-| `BATCH_WINDOW_MS` | `10` | Maximum queueing window |
+| `BATCH_WINDOW_MS` | `3` | Maximum queueing window |
 | `N_CONCURRENCY` | `8` | Maximum requests per model batch |
 | `MAX_QUEUE_SIZE` | `256` | Hard cap on queued requests before HTTP 429 |
 | `REQUEST_TIMEOUT_SECONDS` | `30` | Maximum request wait before HTTP 504 |

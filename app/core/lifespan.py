@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from .apps import AppRegistry
 from .batching import MicroBatcher
-from .config import Settings, load_environment
+from .config import ENV_FILE, Settings
 from .model import ModelService
 
 
@@ -27,8 +27,8 @@ class Runtime:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    env_file_loaded = load_environment()
-    settings = Settings.from_env()
+    settings = Settings()
+    env_file_loaded = ENV_FILE.is_file()
     registry = AppRegistry(settings.apps_dir)
     registry.load()
 
