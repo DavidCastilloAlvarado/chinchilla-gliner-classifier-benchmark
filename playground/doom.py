@@ -114,6 +114,8 @@ MONSTER_NAME_HINTS = (
     "shotgunguy",
 )
 
+GOAL_NAME_HINTS = ("greenarmor", "vest")
+
 
 def _iter_labels(labels: Any) -> list[Any]:
     return [] if labels is None else list(labels)
@@ -122,10 +124,14 @@ def _iter_labels(labels: Any) -> list[Any]:
 def _label_state(labels: Any) -> list[dict[str, Any]]:
     observations: list[dict[str, Any]] = []
     for label in _iter_labels(labels)[:24]:
+        category = str(getattr(label, "object_category", "unknown"))
+        # Weapon pickups are intentionally outside the controller's scope.
+        if category.lower() == "weapon":
+            continue
         observations.append(
             {
                 "object": str(getattr(label, "object_name", "unknown")),
-                "category": str(getattr(label, "object_category", "unknown")),
+                "category": category,
                 "x": round(float(getattr(label, "object_position_x", 0.0)), 2),
                 "y": round(float(getattr(label, "object_position_y", 0.0)), 2),
                 "screen_x": round(float(getattr(label, "x", 0.0)), 2),
@@ -174,6 +180,33 @@ def _visible_monsters(labels: Any, screen_width: int = 320) -> list[dict[str, An
     return sorted(monsters, key=lambda monster: abs(monster["horizontal_error_px"]))
 
 
+def _visible_goals(labels: Any, screen_width: int = 320) -> list[dict[str, Any]]:
+    """Return visible end-of-level goals such as deadly corridor's vest."""
+
+    goals: list[dict[str, Any]] = []
+    midpoint = screen_width / 2.0
+    for label in _iter_labels(labels):
+        name = str(getattr(label, "object_name", "unknown"))
+        category = str(getattr(label, "object_category", "")).lower()
+        if not any(hint in name.lower() for hint in GOAL_NAME_HINTS):
+            continue
+        if category not in {"armor", "item", "goal", "unknown"}:
+            continue
+        width = float(getattr(label, "width", 0.0))
+        if width < 2:
+            continue
+        center_x = float(getattr(label, "x", 0.0)) + width / 2.0
+        goals.append(
+            {
+                "object": name,
+                "screen_center_x": round(center_x, 2),
+                "horizontal_error_px": round(center_x - midpoint, 2),
+                "screen_width": round(width, 2),
+            }
+        )
+    return sorted(goals, key=lambda goal: abs(goal["horizontal_error_px"]))
+
+
 def _button_name(button: Any) -> str:
     name = getattr(button, "name", None)
     return name or str(button).split(".")[-1]
@@ -189,12 +222,18 @@ def doom_state(game: Any, state: Any, episode: int) -> dict[str, Any]:
     screen = np.asarray(state.screen_buffer) if state.screen_buffer is not None else None
     screen_width = int(screen.shape[-1]) if screen is not None and screen.ndim >= 2 else 320
     visible_monsters = _visible_monsters(state.labels, screen_width)
-    # Keep the target close to the crosshair; Doom's hitscan shot is narrow.
+    visible_goals = _visible_goals(state.labels, screen_width)
+    # Keep monster targets close to the crosshair; Doom's hitscan shot is narrow.
     aim_tolerance = _env_float("DOOM_AIM_TOLERANCE", 0.02)
     monsters_in_front = [
         monster["object"]
         for monster in visible_monsters
         if abs(monster["horizontal_error_px"]) <= screen_width * aim_tolerance
+    ]
+    goals_in_front = [
+        goal["object"]
+        for goal in visible_goals
+        if abs(goal["horizontal_error_px"]) <= screen_width * aim_tolerance
     ]
     return {
         "game": "Doom 1 via ViZDoom",
@@ -206,6 +245,8 @@ def doom_state(game: Any, state: Any, episode: int) -> dict[str, Any]:
         "visible_labels": _label_state(state.labels),
         "visible_monsters": visible_monsters,
         "monsters_in_front": monsters_in_front,
+        "visible_goals": visible_goals,
+        "goals_in_front": goals_in_front,
         "aim_tolerance": aim_tolerance,
         "screen_ascii": _screen_ascii(state.screen_buffer),
     }
@@ -318,6 +359,7 @@ def run_doom() -> dict[str, Any]:
     turn_streak = 0
     previous_position: tuple[float, float, float] | None = None
     stuck_steps = 0
+    stuck_turn_action: str | None = None
     try:
         game.new_episode()
         while time.monotonic() - started < max_seconds:
@@ -330,6 +372,7 @@ def run_doom() -> dict[str, Any]:
                 game.new_episode()
                 previous_position = None
                 stuck_steps = 0
+                stuck_turn_action = None
                 turn_streak = 0
 
             observation = game.get_state()
@@ -348,13 +391,24 @@ def run_doom() -> dict[str, Any]:
             }
             if position is not None and previous_position is not None and last_action in movement_actions:
                 distance = sum((a - b) ** 2 for a, b in zip(position, previous_position)) ** 0.5
-                stuck_steps = stuck_steps + 1 if distance < 0.5 else 0
+                if distance < 0.5:
+                    stuck_steps += 1
+                    # Keep turning in one direction. Alternating left/right
+                    # every tic cancels the rotation and leaves the player at
+                    # the wall forever.
+                    if stuck_turn_action is None:
+                        stuck_turn_action = "advance_turn_left"
+                else:
+                    stuck_steps = 0
+                    stuck_turn_action = None
             elif last_action not in movement_actions:
                 stuck_steps = 0
+                stuck_turn_action = None
             previous_position = position
             current_state["last_action"] = last_action
             current_state["turn_streak"] = turn_streak
             current_state["stuck_steps"] = stuck_steps
+            current_state["stuck_turn_action"] = stuck_turn_action
             decision_started = time.monotonic()
             model_action, payload, response = client.choose(
                 current_state,
@@ -363,9 +417,11 @@ def run_doom() -> dict[str, Any]:
                     "Choose one action for the next Doom game frame using the visual "
                     "observation, visible labels, health, ammunition, and reward. "
                     "A monster must be centered under the crosshair before attacking; "
-                    "if it is left or right of center, turn toward it first. Prefer "
-                    "forward movement when no enemy is visible. Return exactly one "
-                    "criterion."
+                    "if it is left or right of center, turn toward it first. After "
+                    "all visible monsters are cleared, follow the end-of-level goal "
+                    "when it is visible. Ignore weapon pickups completely. Prefer "
+                    "forward movement when no enemy or goal is visible. Return exactly "
+                    "one criterion."
                 ),
                 criteria=ACTION_CRITERIA,
             )
@@ -393,9 +449,20 @@ def run_doom() -> dict[str, Any]:
                     override_reason = "aim_right"
             # If position telemetry says a movement action made no progress,
             # turn out of the obstacle instead of repeatedly pressing forward.
-            elif stuck_steps and action_name in movement_actions:
-                action_name = "advance_turn_left" if stuck_steps % 2 else "advance_turn_right"
+            elif stuck_steps:
+                action_name = stuck_turn_action or "advance_turn_left"
                 override_reason = "movement_stuck"
+            elif current_state["visible_goals"]:
+                goal = current_state["visible_goals"][0]
+                if goal["object"] in current_state["goals_in_front"]:
+                    action_name = "move_forward"
+                    override_reason = "goal_centered"
+                elif goal["horizontal_error_px"] < 0:
+                    action_name = "advance_turn_left"
+                    override_reason = "goal_left"
+                else:
+                    action_name = "advance_turn_right"
+                    override_reason = "goal_right"
             elif action_name == "forward_attack":
                 # There is no target in view, so do not waste an attack while
                 # navigating; reserve shooting for the visible-target branch.

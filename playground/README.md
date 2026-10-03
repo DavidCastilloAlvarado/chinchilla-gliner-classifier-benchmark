@@ -94,9 +94,14 @@ strafing, and attack buttons even when a scenario exposes only a subset of them.
 Turn inputs are one-tic pulses followed by neutral input, so buttons are never
 held indefinitely. When living monsters are visible, the runner aims at them and
 fires only when their screen bounding box is close to the crosshair. It clears all
-currently visible living monsters before resuming forward navigation. Dead corpses
+currently visible living monsters before resuming forward navigation. In
+`deadly_corridor.cfg`, the visible `GreenArmor`/vest at the corridor end is the
+goal; once enemies are cleared, the runner turns toward it and advances until
+the episode completes. Weapon pickups are deliberately ignored. Dead corpses
 are filtered out, and position telemetry detects forward movement that made no
-progress so the player can turn away from a wall.
+progress. The recovery turn keeps
+rotating in one direction instead of alternating left/right and canceling itself
+at a wall.
 
 ### ViZDoom scenarios/maps
 
