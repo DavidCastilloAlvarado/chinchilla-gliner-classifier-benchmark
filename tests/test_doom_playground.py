@@ -109,14 +109,14 @@ def test_shoot_target_identifies_centered_enemy_only_when_ready():
     assert _shoot_target(enemies, "turn_after_shot") == "none"
 
 
-def test_combat_policy_preserves_systemone_attack_choice_when_ready():
+def test_combat_policy_forces_attack_when_an_enemy_is_shoot_ready():
     enemies = [
         {"position": "on_spot", "shoot_status": "ready_to_shoot"},
         {"position": "left", "shoot_status": "aim_required"},
     ]
     assert apply_combat_safety("turn_right", "shoot_ready", enemies, "turn_left") == (
-        "turn_right",
-        None,
+        "attack",
+        "shoot_ready_priority",
     )
     assert apply_combat_safety("attack", "shoot_ready", enemies, "turn_left") == (
         "attack",

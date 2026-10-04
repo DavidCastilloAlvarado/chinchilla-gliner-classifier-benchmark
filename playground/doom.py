@@ -345,7 +345,8 @@ def apply_combat_safety(
     """Apply the discrete aim/shoot contract without combining buttons."""
 
     if combat_status == "shoot_ready":
-        # Shoot readiness is context for SystemOne, not an automatic attack.
+        if action_name != "attack":
+            return "attack", "shoot_ready_priority"
         return action_name, None
     sides = [enemy["position"] for enemy in enemies if enemy["position"] in {"left", "right"}]
     if not sides:

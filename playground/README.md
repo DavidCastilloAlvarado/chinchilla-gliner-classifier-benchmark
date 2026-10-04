@@ -125,9 +125,10 @@ SystemOne chooses one key: `move_forward`, `move_backward`, `move_left`,
 `move_right`, `turn_left`, `turn_right`, `attack`, or `wait`. `combat_status` is
 `shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. When it is
 `shoot_ready`, `shoot_target` names a centered enemy; otherwise it is `none`. This
-explicit target is context for SystemOne: the code does not force ATTACK. The
-existing movement and aiming safeguards remain unchanged. Weapon pickups are
-ignored, and each selected key is released before the next decision.
+explicit target is sent to SystemOne, and the controller forces ATTACK whenever
+`combat_status` is `shoot_ready`. The existing movement and aiming safeguards
+remain unchanged. Weapon pickups are ignored, and each selected key is released
+before the next decision.
 
 ### ViZDoom scenarios/maps
 
