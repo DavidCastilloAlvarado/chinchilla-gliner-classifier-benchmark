@@ -321,6 +321,11 @@ def request_prediction(
             retryable = exc.code == 429 or 500 <= exc.code < 600
             if not retryable or attempt + 1 >= attempts:
                 detail = exc.read(500).decode("utf-8", "replace").replace("\n", " ")
+                error_message = f"HTTP {exc.code}: {detail[:250]}"
+                print(
+                    f"ERROR {language.upper()} row {index + 1}: {error_message}",
+                    flush=True,
+                )
                 return {
                     "row_id": index,
                     "language": language,
@@ -329,7 +334,7 @@ def request_prediction(
                     "correct": False,
                     "confidence": None,
                     "latency_ms": round((time.perf_counter() - started) * 1000, 3),
-                    "error": f"HTTP {exc.code}: {detail[:250]}",
+                    "error": error_message,
                 }
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
             delay = float(retry_after) if retry_after and retry_after.isdigit() else min(0.5 * (2**attempt), 4.0)
@@ -338,6 +343,11 @@ def request_prediction(
             last_error = exc
             if attempt + 1 < attempts:
                 time.sleep(min(0.5 * (2**attempt), 4.0))
+    error_message = f"{type(last_error).__name__}: {str(last_error)[:250]}"
+    print(
+        f"ERROR {language.upper()} row {index + 1}: {error_message}",
+        flush=True,
+    )
     return {
         "row_id": index,
         "language": language,
@@ -346,7 +356,7 @@ def request_prediction(
         "correct": False,
         "confidence": None,
         "latency_ms": round((time.perf_counter() - started) * 1000, 3),
-        "error": f"{type(last_error).__name__}: {str(last_error)[:250]}",
+        "error": error_message,
     }
 
 

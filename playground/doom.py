@@ -45,9 +45,9 @@ ACTION_CRITERIA = {
     "move_backward": "Press only MOVE_BACKWARD to retreat when no living enemy is visible.",
     "move_left": "Press only MOVE_LEFT to strafe left when no living enemy is visible.",
     "move_right": "Press only MOVE_RIGHT to strafe right when no living enemy is visible.",
-    "turn_left": "Press only TURN_LEFT for a short pulse to center the view on a visible enemy or reorient.",
-    "turn_right": "Press only TURN_RIGHT for a short pulse to center the view on a visible enemy or reorient.",
-    "attack": "Press only ATTACK when combat_status is shoot_ready; otherwise turn to aim before firing.",
+    "turn_left": "Choose only when shoot_target is none and a visible enemy or goal is to the left.",
+    "turn_right": "Choose only when shoot_target is none and a visible enemy or goal is to the right.",
+    "attack": "Choose ATTACK now when shoot_target names an enemy; this takes priority over turning toward other enemies.",
     "wait": "Press no buttons for this decision.",
 }
 
@@ -209,6 +209,15 @@ def _combat_status(enemies: list[dict[str, Any]], must_aim_after_shot: bool) -> 
     return "aim_required"
 
 
+def _shoot_target(enemies: list[dict[str, Any]], combat_status: str) -> str:
+    if combat_status != "shoot_ready":
+        return "none"
+    return next(
+        (enemy["id"] for enemy in enemies if enemy["shoot_status"] == "ready_to_shoot"),
+        "none",
+    )
+
+
 def _level_tag(value: float, *, critical: float, low: float) -> str:
     if value <= critical:
         return "critical"
@@ -336,8 +345,7 @@ def apply_combat_safety(
     """Apply the discrete aim/shoot contract without combining buttons."""
 
     if combat_status == "shoot_ready":
-        if action_name != "attack":
-            return "attack", "shoot_ready_priority"
+        # Shoot readiness is context for SystemOne, not an automatic attack.
         return action_name, None
     sides = [enemy["position"] for enemy in enemies if enemy["position"] in {"left", "right"}]
     if not sides:
@@ -378,6 +386,12 @@ def _active_tics(action_name: str, frame_skip: int) -> int:
     return frame_skip
 
 
+def _doom_model_from_env() -> str:
+    """Return the configured llama.cpp model alias for Doom decisions."""
+
+    return os.getenv("DOOM_MODEL", os.getenv("DINO_MODEL", "clef-9B"))
+
+
 def run_doom() -> dict[str, Any]:
     """Run one or more bounded ViZDoom episodes using SystemOne choices."""
 
@@ -412,7 +426,9 @@ def run_doom() -> dict[str, Any]:
     max_seconds = _env_float("DOOM_MAX_SECONDS", 30.0)
     # Zero means keep restarting episodes until DOOM_MAX_SECONDS expires.
     max_episodes = _env_int("DOOM_EPISODES", 0)
-    model = os.getenv("DOOM_MODEL", os.getenv("DINO_MODEL", "fastino/GLiNER2.5-multi-Decide"))
+    # llama.cpp routes by its configured model alias (listed by GET /v1/models),
+    # unlike the classifier app's default Hugging Face model identifier.
+    model = _doom_model_from_env()
     client = SystemOneClient(endpoint, model, timeout_seconds=_env_float("DOOM_SYSTEMONE_TIMEOUT_SECONDS", 5.0))
 
     game = vzd.DoomGame()
@@ -493,6 +509,7 @@ def run_doom() -> dict[str, Any]:
                 must_aim_after_shot = False
             combat_status = _combat_status(current_state["enemies"], must_aim_after_shot)
             current_state["combat_status"] = combat_status
+            current_state["shoot_target"] = _shoot_target(current_state["enemies"], combat_status)
             current_state["mode"] = "stationary_defense" if defensive_scenario else "navigate"
             if defensive_scenario:
                 movement_status = "blocked_by_defense"
@@ -514,19 +531,18 @@ def run_doom() -> dict[str, Any]:
                 current_state,
                 question_id="doom_action",
                 instructions=(
-                    "Choose exactly one action (one key). State values are discrete. "
-                    "HARD SHOOTING RULE: when combat_status is shoot_ready, attack "
-                    "now. In every other combat_status, do not attack. If status is "
-                    "aim_required, turn toward an enemy tagged left or right. If it is "
-                    "turn_after_shot, turn toward another off-center enemy before "
-                    "shooting again. An enemy tagged on_spot is ready_to_shoot; "
-                    "distance does not affect readiness. left means turn_left; right "
-                    "means turn_right. When movement.status is blocked_by_enemy or "
-                    "blocked_by_defense, do not move. With no enemies and mode navigate, "
-                    "move_forward when movement.status is search_forward or the goal is "
-                    "on_spot; turn toward a visible goal tagged left/right. If mode is "
-                    "stationary_defense, never move. Ignore weapons. Return exactly "
-                    "one criterion."
+                    "Choose exactly one action (one key). Follow this priority order. "
+                    "FIRST: if shoot_target names an enemy, choose attack now; shoot "
+                    "that centered target before turning toward any other enemy. "
+                    "Otherwise do not attack. shoot_target is none unless an enemy is "
+                    "ready_to_shoot; distance does not affect readiness. SECOND: if "
+                    "enemies need aiming, turn toward an enemy tagged left or right; "
+                    "after a shot, turn toward an off-center enemy if required. THIRD: "
+                    "never move when movement.status is blocked_by_enemy or "
+                    "blocked_by_defense. With no enemies in navigate mode, move forward "
+                    "when status is search_forward or the goal is on_spot; turn toward "
+                    "a visible goal tagged left or right. In stationary_defense never "
+                    "move. Ignore weapons. Return exactly one criterion."
                 ),
                 criteria=ACTION_CRITERIA,
             )

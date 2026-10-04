@@ -102,6 +102,7 @@ raw coordinates or screen data:
   "goal": [{"type": "GreenArmor", "position": "right", "distance": "far"}],
   "mode": "navigate",
   "combat_status": "shoot_ready",
+  "shoot_target": "enemy_2",
   "movement": {"status": "blocked_by_enemy", "goal_direction": "right", "goal_distance": "far", "last_action": "turn_left", "progress": "normal"}
 }
 ```
@@ -120,13 +121,13 @@ visible, the controller moves forward until the goal enters view. Once visible, 
 turns toward a left/right goal or advances when it is on_spot. Enemies still block
 translation, and stationary defense maps never move.
 
-Every SystemOne choice is one key: `move_forward`, `move_backward`, `move_left`,
+SystemOne chooses one key: `move_forward`, `move_backward`, `move_left`,
 `move_right`, `turn_left`, `turn_right`, `attack`, or `wait`. `combat_status` is
-`shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. A centered
-(`on_spot`) enemy is ready to shoot; off-center enemies require aiming. The
-controller still enforces a turn after a shot when off-center enemies remain.
-Weapon pickups are ignored, and each selected key is released before the next
-decision.
+`shoot_ready`, `aim_required`, `turn_after_shot`, or `no_enemies`. When it is
+`shoot_ready`, `shoot_target` names a centered enemy; otherwise it is `none`. This
+explicit target is context for SystemOne: the code does not force ATTACK. The
+existing movement and aiming safeguards remain unchanged. Weapon pickups are
+ignored, and each selected key is released before the next decision.
 
 ### ViZDoom scenarios/maps
 
@@ -195,7 +196,7 @@ shell. `SYSTEMONE_URL` is preferred; the two legacy names are fallback aliases.
 | `DOOM_TURN_TICS` | `1` | Tics for a one-key turn pulse. |
 | `DOOM_ATTACK_TICS` | `4` | Tics for a one-key attack pulse; enough for the weapon to fire. |
 | `DOOM_SYSTEMONE_TIMEOUT_SECONDS` | `5` | HTTP timeout for each SystemOne decision. |
-| `DOOM_MODEL` | `DINO_MODEL` or `fastino/GLiNER2.5-multi-Decide` | SystemOne model identifier. |
+| `DOOM_MODEL` | `DINO_MODEL` or `clef-9B` | SystemOne model identifier; with llama.cpp, use the configured alias from `GET /v1/models`. |
 
 For example:
 

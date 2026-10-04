@@ -136,6 +136,11 @@ class SystemOneClient:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as result:
                 raw_response = result.read().decode("utf-8")
                 response = json.loads(raw_response)
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"SystemOne at {self.url} rejected the request (HTTP {exc.code}): {detail}"
+            ) from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(
                 f"Could not reach SystemOne at {self.url}. Start the local API first."

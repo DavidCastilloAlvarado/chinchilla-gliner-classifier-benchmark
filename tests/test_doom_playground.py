@@ -4,10 +4,13 @@ from types import SimpleNamespace
 
 import numpy as np
 
+import playground.doom as doom_module
+
 from playground.doom import (
     ACTION_BUTTONS,
     ACTION_CRITERIA,
     _combat_status,
+    _shoot_target,
     apply_combat_safety,
     apply_movement_safety,
     apply_navigation_policy,
@@ -40,6 +43,20 @@ def _label(
         height=height,
         object_health=0,
     )
+
+
+def test_doom_defaults_to_llamacpp_model_alias(monkeypatch):
+    monkeypatch.delenv("DOOM_MODEL", raising=False)
+    monkeypatch.delenv("DINO_MODEL", raising=False)
+
+    assert doom_module._doom_model_from_env() == "clef-9B"
+
+
+def test_doom_allows_model_alias_override(monkeypatch):
+    monkeypatch.setenv("DOOM_MODEL", "custom-clef")
+    monkeypatch.delenv("DINO_MODEL", raising=False)
+
+    assert doom_module._doom_model_from_env() == "custom-clef"
 
 
 def test_every_systemone_action_maps_to_at_most_one_button():
@@ -82,14 +99,28 @@ def test_combat_status_requests_a_turn_after_one_shot():
     assert _combat_status([], must_aim_after_shot=False) == "no_enemies"
 
 
-def test_combat_policy_shoots_when_ready_and_aims_toward_available_side():
+def test_shoot_target_identifies_centered_enemy_only_when_ready():
+    enemies = [
+        {"id": "enemy_1", "shoot_status": "aim_required"},
+        {"id": "enemy_2", "shoot_status": "ready_to_shoot"},
+    ]
+    assert _shoot_target(enemies, "shoot_ready") == "enemy_2"
+    assert _shoot_target(enemies, "aim_required") == "none"
+    assert _shoot_target(enemies, "turn_after_shot") == "none"
+
+
+def test_combat_policy_preserves_systemone_attack_choice_when_ready():
     enemies = [
         {"position": "on_spot", "shoot_status": "ready_to_shoot"},
         {"position": "left", "shoot_status": "aim_required"},
     ]
     assert apply_combat_safety("turn_right", "shoot_ready", enemies, "turn_left") == (
+        "turn_right",
+        None,
+    )
+    assert apply_combat_safety("attack", "shoot_ready", enemies, "turn_left") == (
         "attack",
-        "shoot_ready_priority",
+        None,
     )
     assert apply_combat_safety("attack", "turn_after_shot", enemies, "attack") == (
         "turn_left",
